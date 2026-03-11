@@ -5,18 +5,63 @@
     <title>Go WebSocket Chat</title>
     <style>
         /* 全局样式 */
+        * {
+            box-sizing: border-box;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
+            background: linear-gradient(135deg, #71b7e6, #9b59b6);
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
-            background: linear-gradient(135deg, #71b7e6, #9b59b6);
         }
 
-        /* 主容器 */
-        .container {
+        /* 认证页面容器 */
+        #auth-page {
+            width: 360px;
+            padding: 40px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+        #auth-page h2 {
+            margin-bottom: 25px;
+            color: #333;
+        }
+        #auth-page input[type="text"], #auth-page input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #auth-page button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 5px;
+            background-color: #9b59b6;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #auth-page button:hover {
+            background-color: #8e44ad;
+        }
+        .toggle-form {
+            color: #007bff;
+            cursor: pointer;
+            margin-top: 20px;
+            display: inline-block;
+            font-size: 14px;
+        }
+
+        /* 聊天主页面容器 */
+        #chat-page {
             display: flex;
             width: 90%;
             max-width: 1200px;
@@ -34,12 +79,11 @@
             padding: 20px;
             background-color: #f8f9fa;
             overflow-y: auto;
-            flex-shrink: 0; /* 防止被压缩 */
+            flex-shrink: 0;
         }
         .user-list-container h2 {
             font-size: 18px;
             margin-top: 0;
-            border-bottom: 1px solid #ddd;
             padding-bottom: 10px;
             color: #333;
         }
@@ -52,93 +96,46 @@
             padding: 10px 5px;
             border-bottom: 1px solid #eee;
             color: #555;
-            cursor: default; /* 改为默认光标 */
+            cursor: pointer;
             transition: background-color 0.2s;
+            word-break: break-all;
         }
         #user-list li:hover {
             background-color: #e9ecef;
         }
-        #user-list li:last-child {
-            border-bottom: none;
+        #user-list li.active {
+            background-color: #d4edda;
+            font-weight: bold;
         }
 
-        /* 认证和聊天区域的容器 */
-        .main-content {
-            flex-grow: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        /* 认证区域 */
-        .auth-container {
-            width: 320px;
-            padding: 30px;
-            text-align: center;
-        }
         /* 聊天区域 */
         .chat-container {
-            width: 100%;
-            height: 100%;
+            flex-grow: 1;
             display: flex;
             flex-direction: column;
         }
-        h2 {
-            margin-top: 0;
-            color: #333;
+        .chat-container h2 {
+            margin: 0;
+            padding: 20px 20px 15px;
+            border-bottom: 1px solid #eee;
+            font-size: 20px;
         }
-        input[type="text"], input[type="password"] {
-            width: calc(100% - 22px); /* 减去 padding 和 border */
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-        button {
-            width: 100%;
-            padding: 12px;
-            border: none;
-            border-radius: 5px;
-            background-color: #9b59b6;
-            color: #fff;
-            font-size: 16px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        button:hover {
-            background-color: #8e44ad;
-        }
-        button:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
-        .toggle-form {
-            color: #007bff;
-            cursor: pointer;
-            margin-top: 15px;
-            display: inline-block;
-            font-size: 14px;
-        }
-        .toggle-form:hover {
-            text-decoration: underline;
-        }
-
         #messages {
             flex-grow: 1;
             overflow-y: auto;
             padding: 20px;
-            border-bottom: 1px solid #eee;
         }
         .message {
             margin-bottom: 15px;
             line-height: 1.4;
             max-width: 80%;
+            display: flex;
+            flex-direction: column;
         }
         .message .sender {
             font-weight: bold;
             color: #333;
-            display: block;
+            font-size: 12px;
             margin-bottom: 4px;
         }
         .message .content-wrapper {
@@ -146,295 +143,275 @@
             padding: 8px 12px;
             border-radius: 18px;
             background-color: #f1f0f0;
+            text-align: left;
+            word-break: break-all;
+            align-self: flex-start;
         }
         .message .timestamp {
             font-size: 10px;
             color: #aaa;
             margin-top: 4px;
-            display: block;
         }
-
         .system-message {
-            color: #999;
-            font-style: italic;
-            text-align: center;
-            font-size: 12px;
-            width: 100%;
-            max-width: 100%;
+            color: #999; font-style: italic; text-align: center; font-size: 12px; width: 100%; max-width: 100%;
         }
-
-        /* 自己的消息样式 */
         .my-message {
-            margin-left: auto; /* 靠右对齐 */
-            text-align: right;
+            align-items: flex-end; margin-left: auto;
         }
         .my-message .content-wrapper {
-            background-color: #007bff;
-            color: white;
+            background-color: #007bff; color: white; align-self: flex-end;
         }
-        .my-message .sender {
-            /* 自己的名字可以不显示，或者用不同颜色 */
-            display: none;
-        }
-
+        .my-message .sender { display: none; }
         #input-area {
             display: flex;
             padding: 15px;
             background-color: #f8f9fa;
             border-top: 1px solid #eee;
+            align-items: center;
         }
         #message-input, #send-button {
-            /* 核心：统一盒子模型 */
-            box-sizing: border-box;
-
-            /* 统一高度和垂直内边距 */
-            height: 40px; /* 给一个明确的高度，例如 40px */
-            padding-top: 10px;
-            padding-bottom: 10px;
-
-            /* 统一边框和圆角 */
+            height: 40px;
             border: 1px solid #ccc;
             border-radius: 5px;
-
-            /* 统一字体大小 */
             font-size: 14px;
         }
-
         #message-input {
             flex-grow: 1;
             margin-right: 10px;
             resize: none;
-            padding-left: 10px; /* 单独设置左右内边距 */
-            padding-right: 10px;
+            padding: 0 10px;
         }
-
         #send-button {
             width: 80px;
             flex-shrink: 0;
             background-color: #9b59b6;
             color: #fff;
-            border-color: #9b59b6; /* 让按钮边框和背景色一致 */
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-
-        #send-button:hover {
-            background-color: #8e44ad;
-            border-color: #8e44ad;
-        }
-
-        #send-button:disabled {
-            background-color: #ccc;
-            border-color: #ccc;
-            cursor: not-allowed;
+            border-color: #9b59b6;
         }
 
         /* 初始状态控制 */
-        #auth-view { display: block; }
-        #chat-view { display: none; }
+        #auth-page { display: flex; }
+        #chat-page { display: none; }
     </style>
 </head>
 <body>
+<!-- 认证页面 -->
+<div id="auth-page">
+    <div class="auth-container">
+        <div id="login-form">
+            <h2>登录</h2>
+            <input type="text" id="login-username" placeholder="用户名" autocomplete="username">
+            <input type="password" id="login-password" placeholder="密码" autocomplete="current-password">
+            <button id="login-button">登录</button>
+            <p>没有账号？ <span class="toggle-form" onclick="toggleForms()">立即注册</span></p>
+        </div>
+        <div id="register-form" style="display: none;">
+            <h2>注册</h2>
+            <input type="text" id="register-username" placeholder="用户名">
+            <input type="password" id="register-password" placeholder="密码">
+            <button id="register-button">注册</button>
+            <p>已有账号？ <span class="toggle-form" onclick="toggleForms()">立即登录</span></p>
+        </div>
+    </div>
+</div>
 
-<div class="container">
-    <!-- 用户列表区域 -->
+<!-- 聊天主页面 -->
+<div id="chat-page">
     <div class="user-list-container">
         <h2>在线用户</h2>
-        <ul id="user-list">
-            <!-- 用户列表将由JS动态填充 -->
-        </ul>
+        <ul id="user-list"></ul>
     </div>
-
-    <div class="main-content">
-        <!-- 认证区域 -->
-        <div class="auth-container" id="auth-view">
-            <div id="login-form">
-                <h2>登录</h2>
-                <input type="text" id="login-username" placeholder="用户名" autocomplete="username">
-                <input type="password" id="login-password" placeholder="密码" autocomplete="current-password">
-                <button id="login-button">登录</button>
-                <p>没有账号？ <span class="toggle-form" onclick="toggleForms()">立即注册</span></p>
-            </div>
-            <div id="register-form" style="display: none;">
-                <h2>注册</h2>
-                <input type="text" id="register-username" placeholder="用户名">
-                <input type="password" id="register-password" placeholder="密码">
-                <button id="register-button">注册</button>
-                <p>已有账号？ <span class="toggle-form" onclick="toggleForms()">立即登录</span></p>
-            </div>
-        </div>
-
-        <!-- 聊天区域 -->
-        <div class="chat-container" id="chat-view">
-            <div id="messages"></div>
-            <div id="input-area">
-                <input type="text" id="message-input" placeholder="输入消息...">
-                <button id="send-button">发送</button>
-            </div>
+    <div class="chat-container">
+        <h2 id="chat-title"></h2>
+        <div id="messages"></div>
+        <div id="input-area">
+            <input type="text" id="message-input" placeholder="输入消息...">
+            <button id="send-button">发送</button>
         </div>
     </div>
 </div>
 
 <script>
     // --- DOM 元素获取 ---
-    const authView = document.getElementById('auth-view');
-    const chatView = document.getElementById('chat-view');
+    const authPage = document.getElementById('auth-page');
+    const chatPage = document.getElementById('chat-page');
+    // ... 其他 DOM 元素获取 ...
     const loginForm = document.getElementById('login-form');
     const registerForm = document.getElementById('register-form');
-
     const loginBtn = document.getElementById('login-button');
     const registerBtn = document.getElementById('register-button');
-
     const messagesDiv = document.getElementById('messages');
     const messageInput = document.getElementById('message-input');
     const sendButton = document.getElementById('send-button');
     const userListUl = document.getElementById('user-list');
+    const chatTitle = document.getElementById('chat-title');
 
+    // --- 全局状态 (保持不变) ---
     let socket;
     let currentUsername;
+    let currentChatTarget = null;
+    let allUsers = [];
+    let allMessages = [];
 
-    // --- 事件监听 ---
+    // --- 认证逻辑 (保持不变) ---
     function toggleForms() {
         loginForm.style.display = loginForm.style.display === 'none' ? 'block' : 'none';
         registerForm.style.display = registerForm.style.display === 'none' ? 'block' : 'none';
     }
-
     registerBtn.addEventListener('click', async () => {
         const user = document.getElementById('register-username').value;
         const pass = document.getElementById('register-password').value;
-        if (!user || !pass) {
-            alert('用户名和密码不能为空');
-            return;
-        }
+        if (!user || !pass) { alert('用户名和密码不能为空'); return; }
         try {
-            const response = await fetch('/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: user, password: pass })
-            });
-            if (response.status === 201) {
-                alert('注册成功！请登录。');
-                toggleForms();
-            } else {
-                alert('注册失败：' + await response.text());
-            }
-        } catch (error) {
-            alert('注册请求失败：' + error);
-        }
+            const response = await fetch('/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user, password: pass }) });
+            if (response.status === 201) { alert('注册成功！请登录。'); toggleForms(); } else { alert('注册失败：' + await response.text()); }
+        } catch (error) { alert('注册请求失败：' + error); }
     });
-
     loginBtn.addEventListener('click', async () => {
         const user = document.getElementById('login-username').value;
         const pass = document.getElementById('login-password').value;
-        if (!user || !pass) {
-            alert('用户名和密码不能为空');
-            return;
-        }
+        if (!user || !pass) { alert('用户名和密码不能为空'); return; }
         try {
-            const response = await fetch('/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: user, password: pass })
-            });
-
+            const response = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user, password: pass }) });
             if (response.ok) {
                 const data = await response.json();
-                currentUsername = user; // 保存当前用户名
+                currentUsername = user;
                 connectWebSocket(data.token);
-            } else {
-                alert('登录失败：' + await response.text());
-            }
-        } catch (error) {
-            alert('登录请求失败：' + error);
-        }
+            } else { alert('登录失败：' + await response.text()); }
+        } catch (error) { alert('登录请求失败：' + error); }
     });
 
+    // --- WebSocket 连接逻辑 ---
     function connectWebSocket(token) {
         // 切换视图
-        authView.style.display = 'none';
-        chatView.style.display = 'flex';
+        authPage.style.display = 'none';
+        chatPage.style.display = 'flex';
+        allMessages = [];
 
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsHost = window.location.host; // 自动获取当前主机名或IP
+        const wsHost = window.location.host;
         socket = new WebSocket(`${wsProtocol}//${wsHost}/ws?token=${token}`);
 
-        socket.onopen = () => addMessage({ type: 'system', content: '成功连接到聊天室！' });
+        socket.onopen = () => {
+            selectChatTarget(null);
+            addMessageToCacheAndRender({ type: 'system', content: '成功连接到聊天室！', timestamp: new Date().toISOString() });
+        };
 
         socket.onmessage = (event) => {
             const msg = JSON.parse(event.data);
             if (msg.type === 'user_list') {
-                updateUserList(msg.user_list);
+                allUsers = msg.user_list;
+                updateUserListDOM();
             } else {
-                addMessage(msg);
+                addMessageToCacheAndRender(msg);
             }
         };
 
         socket.onclose = () => {
-            addMessage({ type: 'system', content: '连接已断开！将返回登录界面。' });
+            addMessageToCacheAndRender({ type: 'system', content: '连接已断开！', timestamp: new Date().toISOString() });
             setTimeout(() => {
-                authView.style.display = 'block';
-                chatView.style.display = 'none';
+                authPage.style.display = 'flex';
+                chatPage.style.display = 'none';
+                socket = null;
+                allMessages = [];
+                allUsers = [];
+                updateUserListDOM();
             }, 2000);
         };
 
-        socket.onerror = () => addMessage({ type: 'system', content: '连接出错！' });
+        socket.onerror = (error) => { /* ... */ };
     }
 
+    // --- 消息发送逻辑 (保持不变) ---
     sendButton.addEventListener('click', () => sendMessage());
     messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault(); // 防止回车换行
+            e.preventDefault();
             sendMessage();
         }
     });
-
     function sendMessage() {
-        const message = messageInput.value;
-        if (message.trim() && socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(message);
+        const content = messageInput.value;
+        if (content.trim() && socket && socket.readyState === WebSocket.OPEN) {
+            const message = { type: currentChatTarget ? 'private' : 'broadcast', to: currentChatTarget, sender: currentUsername, content: content };
+            socket.send(JSON.stringify(message));
             messageInput.value = '';
         }
     }
 
-    function addMessage(msg) {
+    // --- 核心渲染流程 (保持不变) ---
+    function addMessageToCacheAndRender(msg) { /* ... */ }
+    function renderMessages() { /* ... */ }
+    function addMessageToDOM(msg) { /* ... */ }
+    function updateUserListDOM() { /* ... */ }
+    function selectChatTarget(target) { /* ... */ }
+    function highlightCurrentChat() { /* ... */ }
+    // 折叠渲染JS代码，请保留你原来的正确代码
+    function addMessageToCacheAndRender(msg) {
+        allMessages.push(msg);
+        renderMessages();
+    }
+    function renderMessages() {
+        messagesDiv.innerHTML = '';
+        const messagesToRender = allMessages.filter(msg => {
+            if (msg.type === 'system') return true;
+            if (currentChatTarget === null) { return msg.type === 'broadcast'; }
+            else {
+                return msg.type === 'private' && ((msg.sender === currentUsername && msg.to === currentChatTarget) || (msg.to === currentUsername && msg.sender === currentChatTarget));
+            }
+        });
+        messagesToRender.forEach(msg => addMessageToDOM(msg));
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+    function addMessageToDOM(msg) {
         const msgElement = document.createElement('div');
         msgElement.classList.add('message');
-
         let timeString = '';
         if (msg.timestamp) {
             const date = new Date(msg.timestamp);
             timeString = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
-
         if (msg.type === 'system') {
             msgElement.classList.add('system-message');
             msgElement.textContent = `[系统消息]: ${msg.content} (${timeString})`;
-        } else if (msg.type === 'broadcast') {
-            if (msg.sender === currentUsername) {
-                msgElement.classList.add('my-message');
-            }
-            msgElement.innerHTML = `
-                <div class="sender">${msg.sender}</div>
-                <div class="content-wrapper">
-                    <span>${msg.content}</span>
-                </div>
-                <div class="timestamp">${timeString}</div>
-            `;
+        } else {
+            if (msg.sender === currentUsername) { msgElement.classList.add('my-message'); }
+            let senderText = msg.sender;
+            if (msg.type === 'private') { senderText += (msg.sender === currentUsername) ? ` (私信 to ${msg.to})` : ' (私信)'; }
+            msgElement.innerHTML = `<div class="sender">${senderText}</div><div class="content-wrapper"><span>${msg.content}</span></div><div class="timestamp">${timeString}</div>`;
         }
         messagesDiv.appendChild(msgElement);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
-
-    function updateUserList(users) {
+    function updateUserListDOM() {
         userListUl.innerHTML = '';
-        users.sort();
-        users.forEach(user => {
+        const groupChatElement = document.createElement('li');
+        groupChatElement.textContent = '群聊大厅';
+        groupChatElement.onclick = () => selectChatTarget(null);
+        userListUl.appendChild(groupChatElement);
+        allUsers.sort();
+        allUsers.forEach(user => {
+            if (user === currentUsername) return;
             const userElement = document.createElement('li');
             userElement.textContent = user;
+            userElement.onclick = () => selectChatTarget(user);
             userListUl.appendChild(userElement);
         });
+        highlightCurrentChat();
     }
-
+    function selectChatTarget(target) {
+        currentChatTarget = target;
+        chatTitle.textContent = target ? `与 ${target} 私聊中` : '群聊大厅';
+        highlightCurrentChat();
+        renderMessages();
+    }
+    function highlightCurrentChat() {
+        document.querySelectorAll('#user-list li').forEach(li => {
+            li.classList.remove('active');
+            if ((currentChatTarget === null && li.textContent === '群聊大厅') || (li.textContent === currentChatTarget)) {
+                li.classList.add('active');
+            }
+        });
+    }
 </script>
 
 </body>
