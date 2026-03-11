@@ -62,42 +62,51 @@ func (h *Hub) run() {
 			if err := json.Unmarshal(messageBytes, &msg); err != nil {
 				continue
 			}
-			// 统一为所有聊天消息添加时间戳并存入数据库
-			if msg.Type == "broadcast" || msg.Type == "private" {
-				// 私聊消息不应该存入公共历史记录，这里我们先简化，
-				// 假设所有消息都存，或者可以加个 if 判断
+			// --- 核心改动在这里 ---
+			switch msg.Type {
+			case "private", "broadcast":
+				// --- 处理聊天消息 ---
+				// (这部分逻辑与之前相同，可以折叠)
 				if msg.Type == "broadcast" {
-					chatMsg := ChatMessage{
-						Sender:  msg.Sender,
-						Content: msg.Content,
-					}
+					chatMsg := ChatMessage{Sender: msg.Sender, Content: msg.Content}
 					DB.Create(&chatMsg)
 					msg.Timestamp = chatMsg.CreatedAt
-				} else {
-					// 私聊消息使用当前服务器时间
+					messageBytes, _ = json.Marshal(msg)
+				} else { // private message
 					msg.Timestamp = time.Now()
+					messageBytes, _ = json.Marshal(msg)
 				}
-
-				// 重新序列化带有时间戳的消息
-				messageBytes, _ = json.Marshal(msg)
-			}
-
-			// --- 统一的消息分发逻辑 ---
-			if msg.Type == "private" && msg.To != "" {
-				// 私聊分发
+				if msg.Type == "private" && msg.To != "" {
+					// 私聊分发
+					for client := range h.clients {
+						if client.name == msg.To || client.name == msg.Sender {
+							client.send <- messageBytes
+						}
+					}
+				} else {
+					// 广播分发
+					for client := range h.clients {
+						client.send <- messageBytes
+					}
+				}
+			case "typing", "stop_typing":
+				// --- 新增：处理打字状态消息 ---
+				// 只转发给指定的目标用户，不广播，不存数据库
 				for client := range h.clients {
-					// 发送给目标和发送者自己
-					if client.name == msg.To || client.name == msg.Sender {
+					if client.name == msg.To {
+						// 直接将原始的字节流转发
 						select {
 						case client.send <- messageBytes:
 						default:
 							close(client.send)
 							delete(h.clients, client)
 						}
+						break // 找到目标后就不用再遍历了
 					}
 				}
-			} else {
-				// 广播分发 (包括 system 和 broadcast)
+
+			default:
+				// 处理其他类型的消息，例如 system 消息的广播
 				for client := range h.clients {
 					select {
 					case client.send <- messageBytes:

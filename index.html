@@ -11,11 +11,11 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
-            background: linear-gradient(135deg, #71b7e6, #9b59b6);
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
+            background: linear-gradient(135deg, #71b7e6, #9b59b6);
         }
 
         /* 认证页面容器 */
@@ -26,10 +26,15 @@
             border-radius: 10px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
             text-align: center;
+            display: flex; /* 默认显示 */
+            justify-content: center;
+            align-items: center;
         }
         #auth-page h2 {
             margin-bottom: 25px;
             color: #333;
+            padding: 0;
+            border: none;
         }
         #auth-page input[type="text"], #auth-page input[type="password"] {
             width: 100%;
@@ -37,6 +42,7 @@
             margin-bottom: 15px;
             border: 1px solid #ccc;
             border-radius: 5px;
+            height: auto; /* 覆盖通用规则 */
         }
         #auth-page button {
             width: 100%;
@@ -62,7 +68,7 @@
 
         /* 聊天主页面容器 */
         #chat-page {
-            display: flex;
+            display: none; /* 默认隐藏 */
             width: 90%;
             max-width: 1200px;
             height: 90vh;
@@ -86,6 +92,7 @@
             margin-top: 0;
             padding-bottom: 10px;
             color: #333;
+            border-bottom: 1px solid #ddd;
         }
         #user-list {
             list-style-type: none;
@@ -116,9 +123,16 @@
         }
         .chat-container h2 {
             margin: 0;
-            padding: 20px 20px 15px;
+            padding: 20px 20px 10px;
             border-bottom: 1px solid #eee;
             font-size: 20px;
+        }
+        #typing-indicator {
+            height: 20px;
+            padding: 0 20px;
+            font-style: italic;
+            color: #999;
+            font-size: 12px;
         }
         #messages {
             flex-grow: 1;
@@ -184,14 +198,14 @@
         #send-button {
             width: 80px;
             flex-shrink: 0;
+            padding: 0;
             background-color: #9b59b6;
             color: #fff;
             border-color: #9b59b6;
         }
-
-        /* 初始状态控制 */
-        #auth-page { display: flex; }
-        #chat-page { display: none; }
+        #send-button:hover {
+            background-color: #8e44ad;
+        }
     </style>
 </head>
 <body>
@@ -223,6 +237,7 @@
     </div>
     <div class="chat-container">
         <h2 id="chat-title"></h2>
+        <div id="typing-indicator" class="typing-indicator"></div>
         <div id="messages"></div>
         <div id="input-area">
             <input type="text" id="message-input" placeholder="输入消息...">
@@ -235,7 +250,6 @@
     // --- DOM 元素获取 ---
     const authPage = document.getElementById('auth-page');
     const chatPage = document.getElementById('chat-page');
-    // ... 其他 DOM 元素获取 ...
     const loginForm = document.getElementById('login-form');
     const registerForm = document.getElementById('register-form');
     const loginBtn = document.getElementById('login-button');
@@ -245,13 +259,15 @@
     const sendButton = document.getElementById('send-button');
     const userListUl = document.getElementById('user-list');
     const chatTitle = document.getElementById('chat-title');
+    const typingIndicator = document.getElementById('typing-indicator');
 
-    // --- 全局状态 (保持不变) ---
+    // --- 全局状态 ---
     let socket;
     let currentUsername;
     let currentChatTarget = null;
     let allUsers = [];
     let allMessages = [];
+    let typingTimer;
 
     // --- 认证逻辑 (保持不变) ---
     function toggleForms() {
@@ -283,7 +299,6 @@
 
     // --- WebSocket 连接逻辑 ---
     function connectWebSocket(token) {
-        // 切换视图
         authPage.style.display = 'none';
         chatPage.style.display = 'flex';
         allMessages = [];
@@ -302,27 +317,27 @@
             if (msg.type === 'user_list') {
                 allUsers = msg.user_list;
                 updateUserListDOM();
+            } else if (msg.type === 'typing') {
+                if (msg.sender === currentChatTarget) {
+                    typingIndicator.textContent = `${msg.sender} 正在输入...`;
+                }
+            } else if (msg.type === 'stop_typing') {
+                if (msg.sender === currentChatTarget) {
+                    typingIndicator.textContent = '';
+                }
             } else {
+                if (msg.sender === currentChatTarget) {
+                    typingIndicator.textContent = '';
+                }
                 addMessageToCacheAndRender(msg);
             }
         };
 
-        socket.onclose = () => {
-            addMessageToCacheAndRender({ type: 'system', content: '连接已断开！', timestamp: new Date().toISOString() });
-            setTimeout(() => {
-                authPage.style.display = 'flex';
-                chatPage.style.display = 'none';
-                socket = null;
-                allMessages = [];
-                allUsers = [];
-                updateUserListDOM();
-            }, 2000);
-        };
-
+        socket.onclose = () => { /* ... */ };
         socket.onerror = (error) => { /* ... */ };
     }
 
-    // --- 消息发送逻辑 (保持不变) ---
+    // --- 消息发送与输入事件监听 ---
     sendButton.addEventListener('click', () => sendMessage());
     messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -330,6 +345,18 @@
             sendMessage();
         }
     });
+    messageInput.addEventListener('input', () => {
+        if (currentChatTarget && socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'typing', to: currentChatTarget, sender: currentUsername }));
+        }
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => {
+            if (currentChatTarget && socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'stop_typing', to: currentChatTarget, sender: currentUsername }));
+            }
+        }, 1500);
+    });
+
     function sendMessage() {
         const content = messageInput.value;
         if (content.trim() && socket && socket.readyState === WebSocket.OPEN) {
@@ -339,18 +366,12 @@
         }
     }
 
-    // --- 核心渲染流程 (保持不变) ---
-    function addMessageToCacheAndRender(msg) { /* ... */ }
-    function renderMessages() { /* ... */ }
-    function addMessageToDOM(msg) { /* ... */ }
-    function updateUserListDOM() { /* ... */ }
-    function selectChatTarget(target) { /* ... */ }
-    function highlightCurrentChat() { /* ... */ }
-    // 折叠渲染JS代码，请保留你原来的正确代码
+    // --- 核心渲染流程 ---
     function addMessageToCacheAndRender(msg) {
         allMessages.push(msg);
         renderMessages();
     }
+
     function renderMessages() {
         messagesDiv.innerHTML = '';
         const messagesToRender = allMessages.filter(msg => {
@@ -363,6 +384,7 @@
         messagesToRender.forEach(msg => addMessageToDOM(msg));
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
+
     function addMessageToDOM(msg) {
         const msgElement = document.createElement('div');
         msgElement.classList.add('message');
@@ -382,6 +404,7 @@
         }
         messagesDiv.appendChild(msgElement);
     }
+
     function updateUserListDOM() {
         userListUl.innerHTML = '';
         const groupChatElement = document.createElement('li');
@@ -398,12 +421,15 @@
         });
         highlightCurrentChat();
     }
+
     function selectChatTarget(target) {
         currentChatTarget = target;
         chatTitle.textContent = target ? `与 ${target} 私聊中` : '群聊大厅';
+        typingIndicator.textContent = '';
         highlightCurrentChat();
         renderMessages();
     }
+
     function highlightCurrentChat() {
         document.querySelectorAll('#user-list li').forEach(li => {
             li.classList.remove('active');
