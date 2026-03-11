@@ -350,7 +350,7 @@
     let onlineUsers = [];
     let allMessages = [];
     let typingTimer;
-    let isAdmin = false;
+    let isAdmin = localStorage.getItem('isAdmin') === 'true' || false; // 从 localStorage 恢复 isAdmin 状态
 
     // --- 认证逻辑 ---
     function toggleForms() {
@@ -378,7 +378,8 @@
                 currentUsername = user;
                 isAdmin = data.isAdmin || false;
                 localStorage.setItem('token', data.token); // 保存 token
-                console.log('登录成功，isAdmin:', isAdmin, 'token:', data.token); // 添加调试信息
+                localStorage.setItem('isAdmin', isAdmin.toString()); // 同时保存 isAdmin 状态
+                console.log('登录成功，isAdmin:', isAdmin);
                 connectWebSocket(data.token);
             } else { alert('登录失败：' + await response.text()); }
         } catch (error) { alert('登录请求失败：' + error); }
@@ -399,8 +400,11 @@
             addMessageToCacheAndRender({ type: 'system', content: '成功连接到聊天室！', timestamp: new Date().toISOString() });
 
             // 显示管理员面板（如果是管理员）
+            const adminPanel = document.getElementById('admin-panel');
             if (isAdmin) {
-                document.getElementById('admin-panel').style.display = 'block';
+                adminPanel.style.display = 'block';
+            } else {
+                adminPanel.style.display = 'none';
             }
         };
 
@@ -436,6 +440,10 @@
                 adminPanelRefreshInterval = null;
             }
 
+            // 清除本地存储的状态
+            localStorage.removeItem('token');
+            localStorage.removeItem('isAdmin');
+
             setTimeout(() => {
                 authPage.style.display = 'flex';
                 chatPage.style.display = 'none';
@@ -443,6 +451,7 @@
                 allMessages = [];
                 allUsers = [];
                 onlineUsers = [];
+                isAdmin = false;
                 updateUserListDOM();
             }, 2000);
         };
@@ -639,13 +648,25 @@
     const closeAdminModal = document.getElementById('close-admin-modal');
     const adminUsersTbody = document.getElementById('admin-users-tbody');
     let adminPanelRefreshInterval = null;
+    let adminPanelLoaded = false;
 
     // 打开管理员面板
     adminUsersBtn.addEventListener('click', async () => {
-        adminModal.style.display = 'flex';
-        await loadUsers();
+        // 双重检查：确保只有管理员才能打开
+        if (!isAdmin) {
+            alert('只有管理员才能访问用户管理功能！');
+            return;
+        }
 
-        // 设置定时刷新，每 2 秒更新一次在线状态（只更新状态，不重新加载数据）
+        adminModal.style.display = 'flex';
+
+        // 只在第一次打开或数据为空时才加载
+        if (!adminPanelLoaded || adminUsersTbody.children.length === 0) {
+            await loadUsers();
+            adminPanelLoaded = true;
+        }
+
+        // 设置定时刷新，每 2 秒更新一次在线状态
         if (adminPanelRefreshInterval) {
             clearInterval(adminPanelRefreshInterval);
         }
