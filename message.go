@@ -8,10 +8,11 @@ type ChatMessage struct {
 	ID        uint `gorm:"primaryKey"`
 	CreatedAt time.Time
 
-	Sender   string `gorm:"index"` // 发送者，添加索引以优化查询
-	Receiver string `gorm:"index"` // 新增：接收者，也添加索引
-	Type     string // 新增：消息类型, "broadcast" 或 "private"
+	Sender   string `gorm:"index:idx_sender"` // 发送者
+	Receiver string `gorm:"index:idx_receiver"` // 接收者
+	Type     string `gorm:"index:idx_type"`   // 消息类型
 	Content  string
+	IsRead   bool `gorm:"default:false;index:idx_is_read"` // 是否已读
 }
 
 // Message 定义了在 WebSocket 中传输的消息结构

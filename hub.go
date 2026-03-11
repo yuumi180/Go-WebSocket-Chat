@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"time"
 )
 
@@ -56,11 +57,16 @@ func (h *Hub) broadcastUserList() {
 }
 
 // run 方法保持不变
+
 func (h *Hub) run() {
 	for {
 		select {
 		case client := <-h.register:
 			h.clients[client] = true
+
+			// 发送离线消息给刚上线的用户
+			go h.sendOfflineMessages(client.name)
+
 			h.broadcastUserList()
 
 		case client := <-h.unregister:
@@ -92,8 +98,28 @@ func (h *Hub) run() {
 			}
 
 			if msg.Type == "private" && msg.To != "" {
+				// 检查目标用户是否在线
+				targetOnline := false
 				for client := range h.clients {
-					if client.name == msg.To || client.name == msg.Sender {
+					if client.name == msg.To {
+						targetOnline = true
+						select {
+						case client.send <- messageBytes:
+						default:
+							close(client.send)
+							delete(h.clients, client)
+						}
+					}
+				}
+
+				// 如果目标用户不在线，消息已存储到数据库，等待其上线后拉取
+				if !targetOnline {
+					log.Printf("用户 %s 不在线，消息已存储", msg.To)
+				}
+
+				// 同时也发送给发送者
+				for client := range h.clients {
+					if client.name == msg.Sender {
 						select {
 						case client.send <- messageBytes:
 						default:
@@ -115,3 +141,54 @@ func (h *Hub) run() {
 		}
 	}
 }
+
+// sendOfflineMessages 发送离线消息给指定用户
+func (h *Hub) sendOfflineMessages(username string) {
+	var messages []ChatMessage
+	// 查询所有发送给该用户的未读私信
+	result := DB.Where("receiver = ? AND type = ? AND is_read = ?", username, "private", false).
+		Order("created_at asc").
+		Find(&messages)
+
+	if result.Error != nil || len(messages) == 0 {
+		return
+	}
+
+	// 获取当前用户的客户端
+	var targetClient *Client
+	for client := range h.clients {
+		if client.name == username {
+			targetClient = client
+			break
+		}
+	}
+
+	if targetClient == nil {
+		return
+	}
+
+	// 发送离线消息
+	for _, msg := range messages {
+		offlineMsg := Message{
+			Type:      "private",
+			Sender:    msg.Sender,
+			To:        msg.Receiver,
+			Content:   msg.Content,
+			Timestamp: msg.CreatedAt,
+		}
+		msgBytes, _ := json.Marshal(offlineMsg)
+
+		select {
+		case targetClient.send <- msgBytes:
+		default:
+			return
+		}
+
+		// 标记为已读
+		DB.Model(&msg).Update("is_read", true)
+	}
+
+	log.Printf("已向用户 %s 推送 %d 条离线消息", username, len(messages))
+}
+
+// ... existing code ...

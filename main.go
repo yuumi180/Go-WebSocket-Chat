@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rs/cors"
 )
@@ -16,6 +17,56 @@ import (
 type AuthPayload struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+// createIndexIfNotExists 辅助函数，用于在 MySQL 中创建索引（如果不存在）
+func createIndexIfNotExists(tableName, indexName, columns string) {
+	// 检查索引是否已存在
+	var count int64
+	query := `
+		SELECT COUNT(*) 
+		FROM information_schema.STATISTICS 
+		WHERE table_schema = DATABASE() 
+		AND table_name = ? 
+		AND index_name = ?`
+	DB.Raw(query, tableName, indexName).Scan(&count)
+	
+	if count == 0 {
+		// 索引不存在，创建它
+		createSQL := fmt.Sprintf("CREATE INDEX %s ON %s (%s)", indexName, tableName, columns)
+		result := DB.Exec(createSQL)
+		if result.Error != nil {
+			log.Printf("创建索引失败：%v", result.Error)
+		} else {
+			log.Printf("成功创建索引：%s", indexName)
+		}
+	} else {
+		log.Printf("索引已存在：%s", indexName)
+	}
+}
+
+// createCompositeIndexIfExists 创建优化的复合索引
+func createCompositeIndexIfExists() {
+	// 只为 receiver 和 is_read 创建复合索引，这两个字段足够优化离线消息查询
+	createIndexIfNotExists("chat_messages", "idx_receiver_read", "receiver(50), is_read")
+}
+
+// createDefaultAdmin 创建默认管理员账号
+func createDefaultAdmin() {
+	var admin User
+	result := DB.Where("username = ?", "admin").First(&admin)
+	if result.Error != nil {
+		// 管理员不存在，创建默认管理员
+		admin = User{
+			Username: "admin",
+			Password: "admin123", // 默认密码
+			IsAdmin:  true,
+		}
+		DB.Create(&admin)
+		log.Println("默认管理员账号已创建：用户名=admin, 密码=admin123")
+	} else {
+		log.Println("管理员账号已存在")
+	}
 }
 
 // handleRegister 处理用户注册请求。
@@ -85,13 +136,154 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 将生成的 token 以 JSON 格式返回给前端
+	// 将生成的 token 以 JSON 格式返回给前端，包含 isAdmin 信息
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"token":   tokenString,
+		"isAdmin": user.IsAdmin,
+	})
+}
+
+// handleGetUsers 获取所有用户列表（仅管理员可用）
+func handleGetUsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 验证 JWT token
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr == "" {
+		http.Error(w, "Token is required", http.StatusUnauthorized)
+		return
+	}
+
+	username, err := ValidateJWT(tokenStr)
+	if err != nil {
+		log.Printf("Token 验证失败：%v", err)
+		http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("管理员 %s 请求用户列表", username)
+
+	// 检查是否是管理员
+	var currentUser User
+	result := DB.Where("username = ?", username).First(&currentUser)
+	if result.Error != nil {
+		log.Printf("查找用户失败：%v", result.Error)
+		http.Error(w, "User not found", http.StatusForbidden)
+		return
+	}
+	
+	if !currentUser.IsAdmin {
+		log.Printf("用户 %s 不是管理员", username)
+		http.Error(w, "Admin privileges required", http.StatusForbidden)
+		return
+	}
+
+	// 获取所有用户
+	var users []User
+	DB.Find(&users)
+
+	// 构建用户列表
+	type UserInfo struct {
+		ID        uint      `json:"id"`
+		Username  string    `json:"username"`
+		IsAdmin   bool      `json:"isAdmin"`
+		CreatedAt time.Time `json:"createdAt"`
+	}
+
+	var userList []UserInfo
+	for _, user := range users {
+		userList = append(userList, UserInfo{
+			ID:        user.ID,
+			Username:  user.Username,
+			IsAdmin:   user.IsAdmin,
+			CreatedAt: user.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(userList)
+}
+
+// handleDeleteUser 处理删除用户的请求（仅管理员可用）
+func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 验证 JWT token
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr == "" {
+		http.Error(w, "Token is required", http.StatusUnauthorized)
+		return
+	}
+
+	username, err := ValidateJWT(tokenStr)
+	if err != nil {
+		http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	// 检查是否是管理员
+	var currentUser User
+	result := DB.Where("username = ?", username).First(&currentUser)
+	if result.Error != nil || !currentUser.IsAdmin {
+		http.Error(w, "Admin privileges required", http.StatusForbidden)
+		return
+	}
+
+	// 解析要删除的用户名
+	var req struct {
+		TargetUsername string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetUsername == "" {
+		http.Error(w, "Username is required", http.StatusBadRequest)
+		return
+	}
+
+	// 不能删除自己
+	if req.TargetUsername == username {
+		http.Error(w, "Cannot delete yourself", http.StatusBadRequest)
+		return
+	}
+
+	// 删除用户及其消息
+	var targetUser User
+	deleteResult := DB.Where("username = ?", req.TargetUsername).First(&targetUser)
+	if deleteResult.Error != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// 删除该用户的所有消息
+	DB.Where("sender = ? OR receiver = ?", req.TargetUsername, req.TargetUsername).Delete(&ChatMessage{})
+
+	// 删除用户
+	DB.Delete(&targetUser)
+
+	log.Printf("管理员 %s 删除了用户 %s", username, req.TargetUsername)
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "User deleted successfully")
 }
 
 func main() {
 	InitDB()
+	
+	// GORM 会自动通过 struct tag 创建索引，不需要手动创建
+	// 如果需要优化，可以在这里添加额外的复合索引
+	createCompositeIndexIfExists()
+	
+	// 创建默认管理员账号（如果不存在）
+	createDefaultAdmin()
 
 	hub := newHub()
 	go hub.run()
@@ -104,6 +296,8 @@ func main() {
 	})
 	mux.HandleFunc("/register", handleRegister)
 	mux.HandleFunc("/login", handleLogin)
+	mux.HandleFunc("/admin/users", handleGetUsers)
+	mux.HandleFunc("/admin/delete-user", handleDeleteUser)
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.URL.Query().Get("token")
 		if tokenStr == "" {
@@ -139,7 +333,7 @@ func main() {
 		}
 	}()
 
-	// ... (优雅关闭的逻辑保持不变)
+	// --- 优雅关闭的逻辑保持不变 ---
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan

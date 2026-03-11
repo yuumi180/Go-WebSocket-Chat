@@ -13,6 +13,7 @@ type User struct {
 	gorm.Model
 	Username string `gorm:"unique"`
 	Password string
+	IsAdmin  bool `gorm:"default:false"` // 新增：是否为管理员
 }
 
 // InitDB 初始化数据库连接

@@ -105,6 +105,7 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, username string) 
 	client.hub.register <- client
 
 	go func() {
+		// 加载最近的群聊历史消息
 		var messages []ChatMessage
 		DB.Where("type = ?", "broadcast").Order("created_at desc").Limit(50).Find(&messages)
 		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {

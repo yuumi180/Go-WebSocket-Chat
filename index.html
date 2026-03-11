@@ -276,6 +276,13 @@
     <div class="user-list-container">
         <h2>在线用户</h2>
         <ul id="user-list"></ul>
+
+        <!-- 管理员入口 -->
+        <div id="admin-panel" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
+            <button id="admin-users-btn" style="width: 100%; padding: 10px; background-color: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px;">
+                👑 用户管理
+            </button>
+        </div>
     </div>
     <div class="chat-container">
         <h2 id="chat-title"></h2>
@@ -288,6 +295,33 @@
             <input type="file" id="image-input" accept="image/*" style="display: none;">
             <input type="text" id="message-input" placeholder="输入消息...">
             <button id="send-button">发送</button>
+        </div>
+    </div>
+
+    <!-- 管理员面板模态框 -->
+    <div id="admin-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+        <div style="background: white; border-radius: 10px; padding: 20px; width: 800px; max-width: 90%; max-height: 80vh; overflow-y: auto; position: relative;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #eee;">
+                <h2 style="margin: 0; color: #333;">👑 用户管理</h2>
+                <button id="close-admin-modal" style="background: none; border: none; font-size: 28px; cursor: pointer; color: #999;">&times;</button>
+            </div>
+            <div style="overflow-x: auto;">
+                <table id="admin-users-table" style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                            <th style="padding: 12px; text-align: left;">ID</th>
+                            <th style="padding: 12px; text-align: left;">用户名</th>
+                            <th style="padding: 12px; text-align: left;">角色</th>
+                            <th style="padding: 12px; text-align: left;">注册时间</th>
+                            <th style="padding: 12px; text-align: left;">状态</th>
+                            <th style="padding: 12px; text-align: left;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="admin-users-tbody">
+                        <!-- 动态填充 -->
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -316,6 +350,7 @@
     let onlineUsers = [];
     let allMessages = [];
     let typingTimer;
+    let isAdmin = false;
 
     // --- 认证逻辑 ---
     function toggleForms() {
@@ -331,6 +366,7 @@
             if (response.status === 201) { alert('注册成功！请登录。'); toggleForms(); } else { alert('注册失败：' + await response.text()); }
         } catch (error) { alert('注册请求失败：' + error); }
     });
+
     loginBtn.addEventListener('click', async () => {
         const user = document.getElementById('login-username').value;
         const pass = document.getElementById('login-password').value;
@@ -340,6 +376,9 @@
             if (response.ok) {
                 const data = await response.json();
                 currentUsername = user;
+                isAdmin = data.isAdmin || false;
+                localStorage.setItem('token', data.token); // 保存 token
+                console.log('登录成功，isAdmin:', isAdmin, 'token:', data.token); // 添加调试信息
                 connectWebSocket(data.token);
             } else { alert('登录失败：' + await response.text()); }
         } catch (error) { alert('登录请求失败：' + error); }
@@ -358,6 +397,11 @@
         socket.onopen = () => {
             selectChatTarget(null);
             addMessageToCacheAndRender({ type: 'system', content: '成功连接到聊天室！', timestamp: new Date().toISOString() });
+
+            // 显示管理员面板（如果是管理员）
+            if (isAdmin) {
+                document.getElementById('admin-panel').style.display = 'block';
+            }
         };
 
         socket.onmessage = (event) => {
@@ -365,6 +409,7 @@
             if (msg.type === 'user_list') {
                 allUsers = msg.all_users || [];
                 onlineUsers = msg.user_list || [];
+                console.log('收到用户列表更新:', onlineUsers); // 调试信息
                 updateUserListDOM();
             } else if (msg.type === 'typing') {
                 if (msg.sender === currentChatTarget) {
@@ -384,6 +429,13 @@
 
         socket.onclose = () => {
             addMessageToCacheAndRender({ type: 'system', content: '连接已断开！', timestamp: new Date().toISOString() });
+
+            // 清除管理面板的定时器
+            if (adminPanelRefreshInterval) {
+                clearInterval(adminPanelRefreshInterval);
+                adminPanelRefreshInterval = null;
+            }
+
             setTimeout(() => {
                 authPage.style.display = 'flex';
                 chatPage.style.display = 'none';
@@ -506,6 +558,7 @@
         messagesDiv.appendChild(msgElement);
     }
 
+    // 更新用户列表时，同步更新管理员面板的在线状态
     function updateUserListDOM() {
         userListUl.innerHTML = '';
         const groupChatElement = document.createElement('li');
@@ -531,6 +584,36 @@
             userListUl.appendChild(userElement);
         });
         highlightCurrentChat();
+
+        // 同步更新管理员面板的在线状态
+        updateAdminPanelOnlineStatus();
+    }
+
+    // 更新管理员面板中的在线状态
+    function updateAdminPanelOnlineStatus() {
+        const adminModal = document.getElementById('admin-modal');
+        if (adminModal.style.display !== 'flex') {
+            return; // 如果管理面板没打开，就不更新
+        }
+
+        const onlineUserSet = new Set(onlineUsers);
+        const rows = document.querySelectorAll('#admin-users-tbody tr');
+
+        console.log('更新在线状态，当前在线用户:', onlineUsers); // 调试信息
+
+        rows.forEach(row => {
+            const username = row.cells[1].textContent;
+            const statusCell = row.cells[4];
+            const isOnline = onlineUserSet.has(username);
+
+            console.log(`用户 ${username}: ${isOnline ? '在线' : '离线'}`); // 调试信息
+
+            statusCell.innerHTML = `
+                <span style="color: ${isOnline ? '#28a745' : '#6c757d'}; font-weight: bold;">
+                    ${isOnline ? '● 在线' : '○ 离线'}
+                </span>
+            `;
+        });
     }
 
     function selectChatTarget(target) {
@@ -549,6 +632,150 @@
             }
         });
     }
+
+    // === 管理员功能 ===
+    const adminUsersBtn = document.getElementById('admin-users-btn');
+    const adminModal = document.getElementById('admin-modal');
+    const closeAdminModal = document.getElementById('close-admin-modal');
+    const adminUsersTbody = document.getElementById('admin-users-tbody');
+    let adminPanelRefreshInterval = null;
+
+    // 打开管理员面板
+    adminUsersBtn.addEventListener('click', async () => {
+        adminModal.style.display = 'flex';
+        await loadUsers();
+
+        // 设置定时刷新，每 2 秒更新一次在线状态（只更新状态，不重新加载数据）
+        if (adminPanelRefreshInterval) {
+            clearInterval(adminPanelRefreshInterval);
+        }
+        adminPanelRefreshInterval = setInterval(() => {
+            updateAdminPanelOnlineStatus();
+        }, 2000);
+    });
+
+    // 关闭管理员面板
+    closeAdminModal.addEventListener('click', () => {
+        adminModal.style.display = 'none';
+
+        // 清除定时刷新
+        if (adminPanelRefreshInterval) {
+            clearInterval(adminPanelRefreshInterval);
+            adminPanelRefreshInterval = null;
+        }
+    });
+
+    // 点击模态框外部关闭
+    adminModal.addEventListener('click', (e) => {
+        if (e.target === adminModal) {
+            adminModal.style.display = 'none';
+
+            // 清除定时刷新
+            if (adminPanelRefreshInterval) {
+                clearInterval(adminPanelRefreshInterval);
+                adminPanelRefreshInterval = null;
+            }
+        }
+    });
+
+    // 加载用户列表
+    async function loadUsers() {
+        const token = localStorage.getItem('token') || '';
+        console.log('加载用户列表，token:', token); // 调试信息
+        console.log('当前 isAdmin:', isAdmin); // 调试信息
+
+        try {
+            const response = await fetch(`/admin/users?token=${token}`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            console.log('响应状态:', response.status); // 调试信息
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('服务器返回错误:', errorText); // 调试信息
+                throw new Error('加载用户失败：' + errorText);
+            }
+
+            const users = await response.json();
+            console.log('加载到的用户:', users); // 调试信息
+            renderAdminUsers(users);
+
+            // 加载完成后立即更新在线状态
+            updateAdminPanelOnlineStatus();
+        } catch (error) {
+            console.error('loadUsers 错误:', error); // 调试信息
+            // 只在非 403 错误时才显示错误提示
+            if (!error.message.includes('403') && !error.message.includes('Admin privileges required')) {
+                alert('加载用户列表失败：' + error);
+            } else {
+                console.error('权限验证失败，请重新登录');
+                // 不要自动关闭面板，让用户能看到
+                // adminModal.style.display = 'none';
+                if (adminPanelRefreshInterval) {
+                    clearInterval(adminPanelRefreshInterval);
+                    adminPanelRefreshInterval = null;
+                }
+            }
+        }
+    }
+
+    // 渲染管理员用户表格
+    function renderAdminUsers(users) {
+        adminUsersTbody.innerHTML = '';
+        users.forEach(user => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #dee2e6';
+            const isOnline = onlineUsers.includes(user.username);
+            tr.innerHTML = `
+                <td style="padding: 12px;">${user.id}</td>
+                <td style="padding: 12px; font-weight: bold;">${user.username}</td>
+                <td style="padding: 12px;">${user.isAdmin ? '<span style="background: #ffc107; padding: 3px 8px; border-radius: 3px; font-size: 12px;">👑 管理员</span>' : '<span style="background: #6c757d; padding: 3px 8px; border-radius: 3px; font-size: 12px; color: white;">👤 用户</span>'}</td>
+                <td style="padding: 12px;">${new Date(user.createdAt).toLocaleString('zh-CN')}</td>
+                <td style="padding: 12px;">
+                    <span style="color: ${isOnline ? '#28a745' : '#6c757d'}; font-weight: bold;">
+                        ${isOnline ? '● 在线' : '○ 离线'}
+                    </span>
+                </td>
+                <td style="padding: 12px;">
+                    ${!user.isAdmin ? `<button onclick="deleteUser('${user.username}')" style="padding: 6px 12px; background-color: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">删除</button>` : '<span style="color: #6c757d; font-size: 13px;">不可删除</span>'}
+                </td>
+            `;
+            adminUsersTbody.appendChild(tr);
+        });
+    }
+
+    // 删除用户
+    async function deleteUser(username) {
+        if (!confirm(`⚠️ 确定要删除用户 "${username}" 吗？\n\n这将同时删除该用户的所有消息记录，且无法恢复！`)) {
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('token') || '';
+            const response = await fetch(`/admin/delete-user?token=${token}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username })
+            });
+
+            if (!response.ok) {
+                throw new Error(await response.text());
+            }
+
+            alert(`✅ 用户 "${username}" 已成功删除`);
+            await loadUsers(); // 重新加载用户列表
+
+            // 如果被删除的用户正在聊天，切换到群聊
+            if (currentChatTarget === username) {
+                selectChatTarget(null);
+            }
+        } catch (error) {
+            alert('删除用户失败：' + error);
+        }
+    }
+
 </script>
 
 </body>
