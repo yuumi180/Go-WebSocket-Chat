@@ -7,8 +7,11 @@ import "time"
 type ChatMessage struct {
 	ID        uint `gorm:"primaryKey"`
 	CreatedAt time.Time
-	Sender    string
-	Content   string
+
+	Sender   string `gorm:"index"` // 发送者，添加索引以优化查询
+	Receiver string `gorm:"index"` // 新增：接收者，也添加索引
+	Type     string // 新增：消息类型, "broadcast" 或 "private"
+	Content  string
 }
 
 // Message 定义了在 WebSocket 中传输的消息结构

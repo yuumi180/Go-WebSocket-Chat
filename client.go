@@ -106,7 +106,7 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, username string) 
 
 	go func() {
 		var messages []ChatMessage
-		DB.Order("created_at desc").Limit(50).Find(&messages)
+		DB.Where("type = ?", "broadcast").Order("created_at desc").Limit(50).Find(&messages)
 		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 			messages[i], messages[j] = messages[j], messages[i]
 		}

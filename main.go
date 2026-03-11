@@ -10,12 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/rs/cors" // 导入 CORS 库
+	"github.com/rs/cors"
 )
 
-// ... (AuthPayload, handleRegister, handleLogin 这些函数保持不变) ...
-// ... (你已有的 handleRegister 和 handleLogin 函数代码放在这里) ...
-// AuthPayload 定义了从前端接收的注册和登录请求的 JSON 结构体。
 type AuthPayload struct {
 	Username string `json:"username"`
 	Password string `json:"password"`

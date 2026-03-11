@@ -76,14 +76,18 @@ func (h *Hub) run() {
 				continue
 			}
 
-			if msg.Type == "private" || msg.Type == "broadcast" {
-				if msg.Type == "broadcast" {
-					chatMsg := ChatMessage{Sender: msg.Sender, Content: msg.Content}
-					DB.Create(&chatMsg)
-					msg.Timestamp = chatMsg.CreatedAt
-				} else {
-					msg.Timestamp = time.Now()
+			if msg.Type == "broadcast" || msg.Type == "private" {
+				// 创建数据库记录
+				chatMsg := ChatMessage{
+					Sender:   msg.Sender,
+					Receiver: msg.To, // 将消息的 To 字段存入 Receiver
+					Type:     msg.Type,
+					Content:  msg.Content,
 				}
+				DB.Create(&chatMsg)
+
+				// 使用数据库生成的时间戳更新消息
+				msg.Timestamp = chatMsg.CreatedAt
 				messageBytes, _ = json.Marshal(msg)
 			}
 
