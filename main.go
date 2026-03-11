@@ -90,9 +90,14 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 在生产环境中，密码应该使用 bcrypt 等算法进行哈希处理！
-	// 这里为了教程的简洁性，直接存储明文密码。
-	user := User{Username: payload.Username, Password: payload.Password}
+	// 对密码进行哈希处理
+	hashedPassword, err := HashPassword(payload.Password)
+	if err != nil {
+		http.Error(w, "Failed to process password", http.StatusInternalServerError)
+		return
+	}
+
+	user := User{Username: payload.Username, Password: hashedPassword}
 
 	// 创建用户记录
 	result := DB.Create(&user)
@@ -120,18 +125,35 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("登录尝试 - 用户名：%s", payload.Username)
+
 	var user User
-	// 在数据库中查找匹配的用户名和密码
-	result := DB.Where("username = ? AND password = ?", payload.Username, payload.Password).First(&user)
+	// 在数据库中查找匹配的用户名
+	result := DB.Where("username = ?", payload.Username).First(&user)
 	if result.Error != nil {
-		// 如果找不到记录，返回 401 Unauthorized
+		log.Printf("用户不存在：%s, 错误：%v", payload.Username, result.Error)
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
+	log.Printf("找到用户 - ID: %d, 用户名：%s, 密码哈希长度：%d", user.ID, user.Username, len(user.Password))
+
+	// 验证密码
+	passwordValid := CheckPasswordHash(payload.Password, user.Password)
+	log.Printf("密码验证结果：%v", passwordValid)
+	
+	if !passwordValid {
+		log.Printf("密码验证失败 - 输入密码长度：%d", len(payload.Password))
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("登录成功 - 用户名：%s, isAdmin: %v", user.Username, user.IsAdmin)
+
 	// 验证通过，为该用户生成一个 JWT
 	tokenString, err := GenerateJWT(user.Username)
 	if err != nil {
+		log.Printf("生成 token 失败：%v", err)
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
@@ -264,19 +286,52 @@ func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 删除该用户的所有消息
-	DB.Where("sender = ? OR receiver = ?", req.TargetUsername, req.TargetUsername).Delete(&ChatMessage{})
+	log.Printf("准备删除用户 - ID: %d, 用户名：%s", targetUser.ID, targetUser.Username)
 
-	// 删除用户
-	DB.Delete(&targetUser)
+	// 先删除该用户的所有消息（外键关联）
+	messagesDeleted := DB.Where("sender = ? OR receiver = ?", req.TargetUsername, req.TargetUsername).Delete(&ChatMessage{})
+	log.Printf("删除了 %d 条消息", messagesDeleted.RowsAffected)
 
-	log.Printf("管理员 %s 删除了用户 %s", username, req.TargetUsername)
+	// 使用 Unscoped 强制物理删除，忽略软删除
+	// 直接使用 Exec 执行原生 SQL 删除
+	rawDelete := DB.Exec("DELETE FROM users WHERE username = ?", req.TargetUsername)
+	log.Printf("物理删除用户结果 - 影响行数：%d, 错误：%v", rawDelete.RowsAffected, rawDelete.Error)
+	
+	if rawDelete.Error != nil {
+		log.Printf("物理删除用户失败：%v", rawDelete.Error)
+		http.Error(w, "Failed to delete user: "+rawDelete.Error.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	if rawDelete.RowsAffected == 0 {
+		log.Printf("警告：没有删除任何用户记录")
+		http.Error(w, "No user deleted", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("管理员 %s 删除了用户 %s (ID: %d)", username, req.TargetUsername, targetUser.ID)
+	
+	// 新增：关闭被删除用户的 WebSocket 连接
+	closeUserConnection(req.TargetUsername)
+	
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "User deleted successfully")
 }
 
+// closeUserConnection 关闭指定用户的 WebSocket 连接
+func closeUserConnection(targetUsername string) {
+	// 获取 Hub 实例（需要从全局变量或者参数传递）
+	// 由于 hub 是在 main 函数中创建的，我们需要通过全局变量或者修改函数签名来访问
+	// 这里我们通过修改 client.go 中的 Client 结构来实现
+	log.Printf("准备关闭用户 %s 的 WebSocket 连接", targetUsername)
+	// 具体的关闭逻辑需要在 client.go 和 hub.go 中配合实现
+}
+
 func main() {
 	InitDB()
+	
+	// 迁移旧密码（如果有）
+	MigratePasswords()
 	
 	// GORM 会自动通过 struct tag 创建索引，不需要手动创建
 	// 如果需要优化，可以在这里添加额外的复合索引
@@ -297,7 +352,10 @@ func main() {
 	mux.HandleFunc("/register", handleRegister)
 	mux.HandleFunc("/login", handleLogin)
 	mux.HandleFunc("/admin/users", handleGetUsers)
-	mux.HandleFunc("/admin/delete-user", handleDeleteUser)
+	mux.HandleFunc("/admin/delete-user", func(w http.ResponseWriter, r *http.Request) {
+		// 使用闭包传递 hub
+		handleDeleteUserWithHub(hub, w, r)
+	})
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.URL.Query().Get("token")
 		if tokenStr == "" {
@@ -313,12 +371,13 @@ func main() {
 	})
 
 	// --- 核心改动在这里 ---
-	// 配置 CORS 中间件
+	// 配置 CORS 中间件 - 放宽限制以支持本地开发
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"}, // 允许所有来源，在生产环境中应设置为你的前端域名
+		AllowedOrigins:   []string{"*"}, // 允许所有来源（本地开发用，生产环境改为实际域名）
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
+		MaxAge:           86400, // 缓存预检请求结果 24 小时
 	})
 
 	// 使用 CORS 中间件包裹我们的路由分发器
@@ -338,4 +397,92 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 	fmt.Println("\nShutting down server...")
+}
+
+// handleDeleteUserWithHub 处理删除用户的请求（带 Hub 参数）
+func handleDeleteUserWithHub(hub *Hub, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 验证 JWT token
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr == "" {
+		http.Error(w, "Token is required", http.StatusUnauthorized)
+		return
+	}
+
+	username, err := ValidateJWT(tokenStr)
+	if err != nil {
+		http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	// 检查是否是管理员
+	var currentUser User
+	result := DB.Where("username = ?", username).First(&currentUser)
+	if result.Error != nil || !currentUser.IsAdmin {
+		http.Error(w, "Admin privileges required", http.StatusForbidden)
+		return
+	}
+
+	// 解析要删除的用户名
+	var req struct {
+		TargetUsername string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetUsername == "" {
+		http.Error(w, "Username is required", http.StatusBadRequest)
+		return
+	}
+
+	// 不能删除自己
+	if req.TargetUsername == username {
+		http.Error(w, "Cannot delete yourself", http.StatusBadRequest)
+		return
+	}
+
+	// 删除用户及其消息
+	var targetUser User
+	deleteResult := DB.Where("username = ?", req.TargetUsername).First(&targetUser)
+	if deleteResult.Error != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("准备删除用户 - ID: %d, 用户名：%s", targetUser.ID, targetUser.Username)
+
+	// 先删除该用户的所有消息（外键关联）
+	messagesDeleted := DB.Where("sender = ? OR receiver = ?", req.TargetUsername, req.TargetUsername).Delete(&ChatMessage{})
+	log.Printf("删除了 %d 条消息", messagesDeleted.RowsAffected)
+
+	// 使用 Unscoped 强制物理删除，忽略软删除
+	// 直接使用 Exec 执行原生 SQL 删除
+	rawDelete := DB.Exec("DELETE FROM users WHERE username = ?", req.TargetUsername)
+	log.Printf("物理删除用户结果 - 影响行数：%d, 错误：%v", rawDelete.RowsAffected, rawDelete.Error)
+	
+	if rawDelete.Error != nil {
+		log.Printf("物理删除用户失败：%v", rawDelete.Error)
+		http.Error(w, "Failed to delete user: "+rawDelete.Error.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	if rawDelete.RowsAffected == 0 {
+		log.Printf("警告：没有删除任何用户记录")
+		http.Error(w, "No user deleted", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("管理员 %s 删除了用户 %s (ID: %d)", username, req.TargetUsername, targetUser.ID)
+	
+	// 新增：关闭被删除用户的 WebSocket 连接
+	hub.DisconnectUser(req.TargetUsername)
+	
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "User deleted successfully")
 }

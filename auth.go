@@ -1,4 +1,3 @@
-// auth.go
 package main
 
 import (

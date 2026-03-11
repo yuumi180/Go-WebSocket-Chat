@@ -18,6 +18,104 @@
             background: linear-gradient(135deg, #71b7e6, #9b59b6);
         }
 
+        /* 新增：移动端适配 */
+        @media (max-width: 768px) {
+            #chat-page {
+                width: 100%;
+                height: 100vh;
+                border-radius: 0;
+            }
+            .user-list-container {
+                width: 150px;
+            }
+        }
+
+        /* 新增：通知动画 */
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            background: #333;
+            color: white;
+            border-radius: 5px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 10000;
+            animation: slideIn 0.3s ease-out;
+            max-width: 300px;
+        }
+
+        .notification.success {
+            background: #28a745;
+        }
+
+        .notification.error {
+            background: #dc3545;
+        }
+
+        .notification.info {
+            background: #17a2b8;
+        }
+
+        /* 新增：加载动画 */
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #9b59b6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 新增：消息已读标记 */
+        .message.read {
+            opacity: 0.7;
+        }
+
+        .message.unread {
+            position: relative;
+        }
+
+        .message.unread::before {
+            content: '';
+            position: absolute;
+            left: -5px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 3px;
+            height: 70%;
+            background: #007bff;
+            border-radius: 2px;
+        }
+
+        /* 新增：@提及样式 */
+        .mention {
+            color: #007bff;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .mention:hover {
+            text-decoration: underline;
+        }
+
         /* 认证页面容器 */
         #auth-page {
             width: 360px;
@@ -158,6 +256,7 @@
             flex-grow: 1;
             overflow-y: auto;
             padding: 20px;
+            background: #fafafa;
         }
         .message {
             margin-bottom: 15px;
@@ -165,7 +264,20 @@
             max-width: 80%;
             display: flex;
             flex-direction: column;
+            animation: messageSlide 0.3s ease-out;
         }
+
+        @keyframes messageSlide {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         .message .sender {
             font-weight: bold;
             color: #333;
@@ -250,6 +362,16 @@
         }
         .image-upload-label:hover svg {
             color: #007bff;
+        }
+
+        /* 新增：未读消息计数 */
+        .unread-badge {
+            background: #dc3545;
+            color: white;
+            border-radius: 10px;
+            padding: 2px 6px;
+            font-size: 11px;
+            margin-left: 5px;
         }
     </style>
 </head>
@@ -350,7 +472,50 @@
     let onlineUsers = [];
     let allMessages = [];
     let typingTimer;
-    let isAdmin = localStorage.getItem('isAdmin') === 'true' || false; // 从 localStorage 恢复 isAdmin 状态
+    let isAdmin = localStorage.getItem('isAdmin') === 'true' || false;
+    let unreadCounts = {}; // 新增：未读消息计数
+
+    // --- 工具函数 ---
+    // 新增：显示通知
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `notification ${type}`;
+        notification.textContent = message;
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+            notification.style.animation = 'slideIn 0.3s reverse';
+            setTimeout(() => notification.remove(), 300);
+        }, 3000);
+    }
+
+    // 新增：表情符号转换 - 修复版本
+    function replaceEmojis(text) {
+        // 只在明确是表情符号模式时才替换
+        const emojiPatterns = [
+            { pattern: /:\)/g, emoji: '😊' },
+            { pattern: /:\(/g, emoji: '😢' },
+            { pattern: /:D/g, emoji: '😄' },
+            { pattern: /;\)/g, emoji: '😉' },
+            { pattern: /:P/g, emoji: '😜' },
+            { pattern: /<3/g, emoji: '❤️' },
+            { pattern: /:o/gi, emoji: '😮' },
+            { pattern: /:\|/g, emoji: '😐' }
+        ];
+
+        let result = text;
+        for (const { pattern, emoji } of emojiPatterns) {
+            result = result.replace(pattern, emoji);
+        }
+        return result;
+    }
+
+    // 新增：XSS 防护
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 
     // --- 认证逻辑 ---
     function toggleForms() {
@@ -358,34 +523,72 @@
         registerForm.style.display = registerForm.style.display === 'none' ? 'block' : 'none';
     }
     registerBtn.addEventListener('click', async () => {
-        const user = document.getElementById('register-username').value;
+        const user = document.getElementById('register-username').value.trim();
         const pass = document.getElementById('register-password').value;
-        if (!user || !pass) { alert('用户名和密码不能为空'); return; }
+        if (!user || !pass) {
+            showNotification('用户名和密码不能为空', 'error');
+            return;
+        }
+        if (user.length < 3) {
+            showNotification('用户名至少 3 个字符', 'error');
+            return;
+        }
+        if (pass.length < 6) {
+            showNotification('密码至少 6 个字符', 'error');
+            return;
+        }
         try {
-            const response = await fetch('/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user, password: pass }) });
-            if (response.status === 201) { alert('注册成功！请登录。'); toggleForms(); } else { alert('注册失败：' + await response.text()); }
-        } catch (error) { alert('注册请求失败：' + error); }
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user, password: pass })
+            });
+            if (response.status === 201) {
+                showNotification('注册成功！请登录', 'success');
+                toggleForms();
+            } else {
+                showNotification('注册失败：' + await response.text(), 'error');
+            }
+        } catch (error) {
+            showNotification('注册请求失败：' + error.message, 'error');
+        }
     });
 
     loginBtn.addEventListener('click', async () => {
-        const user = document.getElementById('login-username').value;
+        const user = document.getElementById('login-username').value.trim();
         const pass = document.getElementById('login-password').value;
-        if (!user || !pass) { alert('用户名和密码不能为空'); return; }
+        if (!user || !pass) {
+            showNotification('用户名和密码不能为空', 'error');
+            return;
+        }
         try {
-            const response = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user, password: pass }) });
+            const response = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user, password: pass })
+            });
             if (response.ok) {
                 const data = await response.json();
                 currentUsername = user;
                 isAdmin = data.isAdmin || false;
-                localStorage.setItem('token', data.token); // 保存 token
-                localStorage.setItem('isAdmin', isAdmin.toString()); // 同时保存 isAdmin 状态
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('isAdmin', isAdmin.toString());
                 console.log('登录成功，isAdmin:', isAdmin);
+                showNotification('欢迎回来，' + user + '！', 'success');
                 connectWebSocket(data.token);
-            } else { alert('登录失败：' + await response.text()); }
-        } catch (error) { alert('登录请求失败：' + error); }
+            } else {
+                showNotification('登录失败：' + await response.text(), 'error');
+            }
+        } catch (error) {
+            showNotification('登录请求失败：' + error.message, 'error');
+        }
     });
 
     // --- WebSocket 连接逻辑 ---
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_DELAY = 3000;
+
     function connectWebSocket(token) {
         authPage.style.display = 'none';
         chatPage.style.display = 'flex';
@@ -396,6 +599,7 @@
         socket = new WebSocket(`${wsProtocol}//${wsHost}/ws?token=${token}`);
 
         socket.onopen = () => {
+            reconnectAttempts = 0; // 重置重连计数
             selectChatTarget(null);
             addMessageToCacheAndRender({ type: 'system', content: '成功连接到聊天室！', timestamp: new Date().toISOString() });
 
@@ -413,7 +617,7 @@
             if (msg.type === 'user_list') {
                 allUsers = msg.all_users || [];
                 onlineUsers = msg.user_list || [];
-                console.log('收到用户列表更新:', onlineUsers); // 调试信息
+                console.log('收到用户列表更新:', onlineUsers);
                 updateUserListDOM();
             } else if (msg.type === 'typing') {
                 if (msg.sender === currentChatTarget) {
@@ -427,33 +631,57 @@
                 if (msg.sender === currentChatTarget || (msg.type === 'private' && msg.to === currentUsername) || msg.type === 'broadcast' || msg.type === 'system') {
                     typingIndicator.textContent = '';
                 }
+
+                // 新增：如果是私信且不是当前聊天对象，增加未读计数
+                if (msg.type === 'private' && msg.to === currentUsername && msg.sender !== currentChatTarget) {
+                    if (!unreadCounts[msg.sender]) {
+                        unreadCounts[msg.sender] = 0;
+                    }
+                    unreadCounts[msg.sender]++;
+                    updateUserListWithUnreadBadge(msg.sender);
+
+                    // 浏览器通知
+                    if (Notification.permission === 'granted') {
+                        new Notification('新消息来自 ' + msg.sender, {
+                            body: msg.contentType === 'image' ? '📷 图片消息' : msg.content,
+                            icon: '/favicon.ico'
+                        });
+                    }
+                }
+
                 addMessageToCacheAndRender(msg);
             }
         };
 
         socket.onclose = () => {
-            addMessageToCacheAndRender({ type: 'system', content: '连接已断开！', timestamp: new Date().toISOString() });
+            addMessageToCacheAndRender({ type: 'system', content: '连接已断开！正在尝试重连...', timestamp: new Date().toISOString() });
 
-            // 清除管理面板的定时器
             if (adminPanelRefreshInterval) {
                 clearInterval(adminPanelRefreshInterval);
                 adminPanelRefreshInterval = null;
             }
 
-            // 清除本地存储的状态
-            localStorage.removeItem('token');
-            localStorage.removeItem('isAdmin');
+            // 自动重连机制
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                reconnectAttempts++;
+                const delay = RECONNECT_DELAY * reconnectAttempts; // 指数退避
 
-            setTimeout(() => {
-                authPage.style.display = 'flex';
-                chatPage.style.display = 'none';
-                socket = null;
-                allMessages = [];
-                allUsers = [];
-                onlineUsers = [];
-                isAdmin = false;
-                updateUserListDOM();
-            }, 2000);
+                setTimeout(() => {
+                    const storedToken = localStorage.getItem('token');
+                    if (storedToken) {
+                        connectWebSocket(storedToken);
+                    } else {
+                        location.reload();
+                    }
+                }, delay);
+            } else {
+                // 超过最大重连次数，返回登录页
+                setTimeout(() => {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('isAdmin');
+                    location.reload();
+                }, 2000);
+            }
         };
 
         socket.onerror = (error) => {
@@ -547,24 +775,44 @@
             msgElement.classList.add('system-message');
             msgElement.textContent = `[系统消息]: ${msg.content} (${timeString})`;
         } else {
-            if (msg.sender === currentUsername) { msgElement.classList.add('my-message'); }
-            let senderText = msg.sender;
-            if (msg.type === 'private') { senderText += (msg.sender === currentUsername) ? ` (私信 to ${msg.to})` : ' (私信)'; }
+            if (msg.sender === currentUsername) {
+                msgElement.classList.add('my-message');
+            }
 
-            let contentHTML = '';
+            // 新增：检查是否是未读消息
+            if (msg.type === 'private' && msg.to === currentUsername && msg.sender !== currentUsername) {
+                msgElement.classList.add('unread');
+            }
+
+            let senderText = msg.sender;
+            if (msg.type === 'private') {
+                senderText += (msg.sender === currentUsername) ? ` (私信 to ${msg.to})` : ' (私信)';
+            }
+
+            const contentWrapper = document.createElement('div');
+            contentWrapper.className = 'content-wrapper';
+
             if (msg.contentType === 'image') {
-                contentHTML = `<img src="${msg.content}" alt="Image from ${msg.sender}">`;
+                const img = document.createElement('img');
+                img.src = msg.content;
+                img.alt = `Image from ${msg.sender}`;
+                img.onclick = () => window.open(msg.content);
+                contentWrapper.appendChild(img);
             } else {
-                contentHTML = `<span>${msg.content}</span>`;
+                // 使用 textContent 而不是 innerHTML，避免浏览器自动替换
+                const span = document.createElement('span');
+                span.textContent = msg.content;
+                contentWrapper.appendChild(span);
             }
 
             msgElement.innerHTML = `
-                <div class="sender">${senderText}</div>
-                <div class="content-wrapper">${contentHTML}</div>
+                <div class="sender">${escapeHtml(senderText)}</div>
                 <div class="timestamp">${timeString}</div>
             `;
+            msgElement.insertBefore(contentWrapper, msgElement.querySelector('.timestamp'));
         }
         messagesDiv.appendChild(msgElement);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
     // 更新用户列表时，同步更新管理员面板的在线状态
@@ -629,8 +877,18 @@
         currentChatTarget = target;
         chatTitle.textContent = target ? `与 ${target} 私聊中` : '群聊大厅';
         typingIndicator.textContent = '';
+
+        // 新增：清除未读计数
+        if (target && unreadCounts[target]) {
+            unreadCounts[target] = 0;
+            delete unreadCounts[target]; // 完全删除这个键
+        }
+
         highlightCurrentChat();
         renderMessages();
+
+        // 新增：重新渲染用户列表，移除未读徽章
+        updateUserListDOM();
     }
 
     function highlightCurrentChat() {
@@ -638,6 +896,25 @@
             li.classList.remove('active');
             if ((currentChatTarget === null && li.textContent === '群聊大厅') || (li.textContent.endsWith(currentChatTarget))) {
                 li.classList.add('active');
+            }
+        });
+    }
+
+    // 新增：在用户列表中显示未读徽章
+    function updateUserListWithUnreadBadge(username) {
+        const userElements = document.querySelectorAll('#user-list li');
+        userElements.forEach(li => {
+            if (li.textContent.includes(username)) {
+                const count = unreadCounts[username] || 0;
+                if (count > 0) {
+                    let badge = li.querySelector('.unread-badge');
+                    if (!badge) {
+                        badge = document.createElement('span');
+                        badge.className = 'unread-badge';
+                        li.appendChild(badge);
+                    }
+                    badge.textContent = count;
+                }
             }
         });
     }
@@ -786,15 +1063,37 @@
             }
 
             alert(`✅ 用户 "${username}" 已成功删除`);
-            await loadUsers(); // 重新加载用户列表
+
+            // 重新加载用户列表
+            await loadUsers();
 
             // 如果被删除的用户正在聊天，切换到群聊
             if (currentChatTarget === username) {
                 selectChatTarget(null);
             }
+
+            // 新增：从 allUsers 中移除被删除的用户
+            const index = allUsers.indexOf(username);
+            if (index > -1) {
+                allUsers.splice(index, 1);
+            }
+
+            // 新增：清除与该用户相关的未读计数
+            if (unreadCounts[username]) {
+                delete unreadCounts[username];
+            }
+
+            // 新增：重新渲染用户列表，确保 UI 更新
+            updateUserListDOM();
+
         } catch (error) {
             alert('删除用户失败：' + error);
         }
+    }
+
+    // 新增：请求通知权限
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
     }
 
 </script>

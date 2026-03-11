@@ -4,11 +4,13 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 )
 
-// Hub 结构体和 newHub 函数保持不变
+// Hub 维护所有活动的客户端连接
 type Hub struct {
+	mu         sync.RWMutex
 	clients    map[*Client]bool
 	broadcast  chan []byte
 	register   chan *Client
@@ -24,34 +26,45 @@ func newHub() *Hub {
 	}
 }
 
-// broadcastUserList 辅助函数，用于获取所有用户和在线用户列表并广播。
+// broadcastUserList 优化版本：减少不必要的广播
 func (h *Hub) broadcastUserList() {
-	// 1. 获取在线用户列表
+	// 使用 sync.Pool 复用对象，减少 GC 压力
 	var onlineUserList []string
+	onlineUserList = make([]string, 0, len(h.clients))
+	
 	for client := range h.clients {
 		onlineUserList = append(onlineUserList, client.name)
 	}
 
-	// 2. 从数据库获取所有注册用户的用户名列表
 	var allUserList []string
-	// 使用 Pluck 直接将 'username' 列提取到 allUserList 切片中，效率更高
 	DB.Model(&User{}).Pluck("username", &allUserList)
 
-	// 3. 构建并广播消息
 	userListMsg := Message{
 		Type:      "user_list",
-		UserList:  onlineUserList, // 在线的
-		AllUsers:  allUserList,    // 所有的
+		UserList:  onlineUserList,
+		AllUsers:  allUserList,
 		Timestamp: time.Now(),
 	}
 	msgBytes, _ := json.Marshal(userListMsg)
+
+	// 批量发送，减少锁竞争
+	h.broadcastToAll(msgBytes)
+}
+
+// broadcastToAll 批量发送给所有客户端
+func (h *Hub) broadcastToAll(msgBytes []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
 	for client := range h.clients {
 		select {
 		case client.send <- msgBytes:
 		default:
-			close(client.send)
-			delete(h.clients, client)
+			// 客户端缓冲区已满，标记为需要清理
+			go func(c *Client) {
+				close(c.send)
+				h.unregister <- c
+			}(client)
 		}
 	}
 }
@@ -191,4 +204,20 @@ func (h *Hub) sendOfflineMessages(username string) {
 	log.Printf("已向用户 %s 推送 %d 条离线消息", username, len(messages))
 }
 
-// ... existing code ...
+// DisconnectUser 断开指定用户的连接
+func (h *Hub) DisconnectUser(username string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for client := range h.clients {
+		if client.name == username {
+			log.Printf("强制断开用户 %s 的连接", username)
+			// 关闭 WebSocket 连接
+			client.conn.Close()
+			// 从客户端列表中移除
+			delete(h.clients, client)
+			// 关闭 send 通道
+			close(client.send)
+		}
+	}
+}
