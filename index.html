@@ -26,7 +26,7 @@
             border-radius: 10px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
             text-align: center;
-            display: flex; /* 默认显示 */
+            display: flex;
             justify-content: center;
             align-items: center;
         }
@@ -35,6 +35,7 @@
             color: #333;
             padding: 0;
             border: none;
+            font-size: 24px;
         }
         #auth-page input[type="text"], #auth-page input[type="password"] {
             width: 100%;
@@ -42,7 +43,8 @@
             margin-bottom: 15px;
             border: 1px solid #ccc;
             border-radius: 5px;
-            height: auto; /* 覆盖通用规则 */
+            height: auto;
+            font-size: 14px;
         }
         #auth-page button {
             width: 100%;
@@ -65,10 +67,13 @@
             display: inline-block;
             font-size: 14px;
         }
+        .toggle-form:hover {
+            text-decoration: underline;
+        }
 
         /* 聊天主页面容器 */
         #chat-page {
-            display: none; /* 默认隐藏 */
+            display: none;
             width: 90%;
             max-width: 1200px;
             height: 90vh;
@@ -106,6 +111,8 @@
             cursor: pointer;
             transition: background-color 0.2s;
             word-break: break-all;
+            display: flex;
+            align-items: center;
         }
         #user-list li:hover {
             background-color: #e9ecef;
@@ -113,6 +120,19 @@
         #user-list li.active {
             background-color: #d4edda;
             font-weight: bold;
+        }
+        .status-dot {
+            height: 8px;
+            width: 8px;
+            border-radius: 50%;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+        .status-dot.online {
+            background-color: #28a745;
+        }
+        .status-dot.offline {
+            background-color: #ccc;
         }
 
         /* 聊天区域 */
@@ -166,9 +186,17 @@
             color: #aaa;
             margin-top: 4px;
         }
+        .message .content-wrapper img {
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 10px;
+            display: block;
+        }
+
         .system-message {
             color: #999; font-style: italic; text-align: center; font-size: 12px; width: 100%; max-width: 100%;
         }
+
         .my-message {
             align-items: flex-end; margin-left: auto;
         }
@@ -176,6 +204,7 @@
             background-color: #007bff; color: white; align-self: flex-end;
         }
         .my-message .sender { display: none; }
+
         #input-area {
             display: flex;
             padding: 15px;
@@ -206,10 +235,25 @@
         #send-button:hover {
             background-color: #8e44ad;
         }
+        .image-upload-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        .image-upload-label svg {
+            color: #555;
+            transition: color 0.2s;
+        }
+        .image-upload-label:hover svg {
+            color: #007bff;
+        }
     </style>
 </head>
 <body>
-<!-- 认证页面 -->
 <div id="auth-page">
     <div class="auth-container">
         <div id="login-form">
@@ -228,8 +272,6 @@
         </div>
     </div>
 </div>
-
-<!-- 聊天主页面 -->
 <div id="chat-page">
     <div class="user-list-container">
         <h2>在线用户</h2>
@@ -240,6 +282,10 @@
         <div id="typing-indicator" class="typing-indicator"></div>
         <div id="messages"></div>
         <div id="input-area">
+            <label for="image-input" class="image-upload-label">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+            </label>
+            <input type="file" id="image-input" accept="image/*" style="display: none;">
             <input type="text" id="message-input" placeholder="输入消息...">
             <button id="send-button">发送</button>
         </div>
@@ -260,16 +306,18 @@
     const userListUl = document.getElementById('user-list');
     const chatTitle = document.getElementById('chat-title');
     const typingIndicator = document.getElementById('typing-indicator');
+    const imageInput = document.getElementById('image-input');
 
     // --- 全局状态 ---
     let socket;
     let currentUsername;
     let currentChatTarget = null;
     let allUsers = [];
+    let onlineUsers = [];
     let allMessages = [];
     let typingTimer;
 
-    // --- 认证逻辑 (保持不变) ---
+    // --- 认证逻辑 ---
     function toggleForms() {
         loginForm.style.display = loginForm.style.display === 'none' ? 'block' : 'none';
         registerForm.style.display = registerForm.style.display === 'none' ? 'block' : 'none';
@@ -315,7 +363,8 @@
         socket.onmessage = (event) => {
             const msg = JSON.parse(event.data);
             if (msg.type === 'user_list') {
-                allUsers = msg.user_list;
+                allUsers = msg.all_users || [];
+                onlineUsers = msg.user_list || [];
                 updateUserListDOM();
             } else if (msg.type === 'typing') {
                 if (msg.sender === currentChatTarget) {
@@ -326,23 +375,38 @@
                     typingIndicator.textContent = '';
                 }
             } else {
-                if (msg.sender === currentChatTarget) {
+                if (msg.sender === currentChatTarget || (msg.type === 'private' && msg.to === currentUsername) || msg.type === 'broadcast' || msg.type === 'system') {
                     typingIndicator.textContent = '';
                 }
                 addMessageToCacheAndRender(msg);
             }
         };
 
-        socket.onclose = () => { /* ... */ };
-        socket.onerror = (error) => { /* ... */ };
+        socket.onclose = () => {
+            addMessageToCacheAndRender({ type: 'system', content: '连接已断开！', timestamp: new Date().toISOString() });
+            setTimeout(() => {
+                authPage.style.display = 'flex';
+                chatPage.style.display = 'none';
+                socket = null;
+                allMessages = [];
+                allUsers = [];
+                onlineUsers = [];
+                updateUserListDOM();
+            }, 2000);
+        };
+
+        socket.onerror = (error) => {
+            console.error('WebSocket Error:', error);
+            addMessageToCacheAndRender({ type: 'system', content: '连接出错！', timestamp: new Date().toISOString() });
+        };
     }
 
     // --- 消息发送与输入事件监听 ---
-    sendButton.addEventListener('click', () => sendMessage());
+    sendButton.addEventListener('click', () => sendTextMessage());
     messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            sendMessage();
+            sendTextMessage();
         }
     });
     messageInput.addEventListener('input', () => {
@@ -356,11 +420,35 @@
             }
         }, 1500);
     });
+    imageInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file && socket && socket.readyState === WebSocket.OPEN) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const message = {
+                    type: currentChatTarget ? 'private' : 'broadcast',
+                    to: currentChatTarget,
+                    sender: currentUsername,
+                    content: e.target.result,
+                    contentType: 'image'
+                };
+                socket.send(JSON.stringify(message));
+            };
+            reader.readAsDataURL(file);
+        }
+        event.target.value = null;
+    });
 
-    function sendMessage() {
+    function sendTextMessage() {
         const content = messageInput.value;
-        if (content.trim() && socket && socket.readyState === WebSocket.OPEN) {
-            const message = { type: currentChatTarget ? 'private' : 'broadcast', to: currentChatTarget, sender: currentUsername, content: content };
+        if (content.trim()) {
+            const message = {
+                type: currentChatTarget ? 'private' : 'broadcast',
+                to: currentChatTarget,
+                sender: currentUsername,
+                content: content,
+                contentType: 'text'
+            };
             socket.send(JSON.stringify(message));
             messageInput.value = '';
         }
@@ -376,8 +464,9 @@
         messagesDiv.innerHTML = '';
         const messagesToRender = allMessages.filter(msg => {
             if (msg.type === 'system') return true;
-            if (currentChatTarget === null) { return msg.type === 'broadcast'; }
-            else {
+            if (currentChatTarget === null) {
+                return msg.type === 'broadcast';
+            } else {
                 return msg.type === 'private' && ((msg.sender === currentUsername && msg.to === currentChatTarget) || (msg.to === currentUsername && msg.sender === currentChatTarget));
             }
         });
@@ -400,7 +489,19 @@
             if (msg.sender === currentUsername) { msgElement.classList.add('my-message'); }
             let senderText = msg.sender;
             if (msg.type === 'private') { senderText += (msg.sender === currentUsername) ? ` (私信 to ${msg.to})` : ' (私信)'; }
-            msgElement.innerHTML = `<div class="sender">${senderText}</div><div class="content-wrapper"><span>${msg.content}</span></div><div class="timestamp">${timeString}</div>`;
+
+            let contentHTML = '';
+            if (msg.contentType === 'image') {
+                contentHTML = `<img src="${msg.content}" alt="Image from ${msg.sender}">`;
+            } else {
+                contentHTML = `<span>${msg.content}</span>`;
+            }
+
+            msgElement.innerHTML = `
+                <div class="sender">${senderText}</div>
+                <div class="content-wrapper">${contentHTML}</div>
+                <div class="timestamp">${timeString}</div>
+            `;
         }
         messagesDiv.appendChild(msgElement);
     }
@@ -411,12 +512,22 @@
         groupChatElement.textContent = '群聊大厅';
         groupChatElement.onclick = () => selectChatTarget(null);
         userListUl.appendChild(groupChatElement);
+        const onlineUserSet = new Set(onlineUsers);
         allUsers.sort();
         allUsers.forEach(user => {
             if (user === currentUsername) return;
             const userElement = document.createElement('li');
-            userElement.textContent = user;
             userElement.onclick = () => selectChatTarget(user);
+            const statusDot = document.createElement('span');
+            statusDot.classList.add('status-dot');
+            if (onlineUserSet.has(user)) {
+                statusDot.classList.add('online');
+            } else {
+                statusDot.classList.add('offline');
+            }
+            const userNameText = document.createTextNode(user);
+            userElement.appendChild(statusDot);
+            userElement.appendChild(userNameText);
             userListUl.appendChild(userElement);
         });
         highlightCurrentChat();
@@ -433,7 +544,7 @@
     function highlightCurrentChat() {
         document.querySelectorAll('#user-list li').forEach(li => {
             li.classList.remove('active');
-            if ((currentChatTarget === null && li.textContent === '群聊大厅') || (li.textContent === currentChatTarget)) {
+            if ((currentChatTarget === null && li.textContent === '群聊大厅') || (li.textContent.endsWith(currentChatTarget))) {
                 li.classList.add('active');
             }
         });
