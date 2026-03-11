@@ -8,21 +8,54 @@ import (
 	"time"
 )
 
-// Hub 维护所有活动的客户端连接
+// Hub 添加消息队列
 type Hub struct {
-	mu         sync.RWMutex
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
+	mu            sync.RWMutex
+	clients       map[*Client]bool
+	broadcast     chan []byte
+	register      chan *Client
+	unregister    chan *Client
+	messageQueue  chan *ChatMessage // 消息队列，用于批量写入
 }
 
 func newHub() *Hub {
-	return &Hub{
+	hub := &Hub{
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
+		messageQueue: make(chan *ChatMessage, 1000), // 队列容量 1000
+	}
+	
+	// 启动异步写入协程
+	go hub.batchSaveMessages()
+	
+	return hub
+}
+
+// batchSaveMessages 批量保存消息到数据库
+func (h *Hub) batchSaveMessages() {
+	ticker := time.NewTicker(100 * time.Millisecond) // 每 100ms 批量写入一次
+	defer ticker.Stop()
+
+	batch := make([]*ChatMessage, 0, 100)
+	
+	for {
+		select {
+		case msg := <-h.messageQueue:
+			batch = append(batch, msg)
+			if len(batch) >= 100 {
+				// 达到批量大小，立即写入
+				DB.CreateInBatches(batch, 100)
+				batch = batch[:0]
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				// 定时写入
+				DB.CreateInBatches(batch, 100)
+				batch = batch[:0]
+			}
+		}
 	}
 }
 
@@ -69,8 +102,14 @@ func (h *Hub) broadcastToAll(msgBytes []byte) {
 	}
 }
 
-// run 方法保持不变
+// 添加消息对象池
+var messagePool = sync.Pool{
+	New: func() interface{} {
+		return &Message{}
+	},
+}
 
+// run 方法中使用对象池
 func (h *Hub) run() {
 	for {
 		select {
@@ -90,23 +129,31 @@ func (h *Hub) run() {
 			}
 
 		case messageBytes := <-h.broadcast:
-			var msg Message
-			if err := json.Unmarshal(messageBytes, &msg); err != nil {
+			msg := messagePool.Get().(*Message)
+			if err := json.Unmarshal(messageBytes, msg); err != nil {
+				messagePool.Put(msg)
 				continue
 			}
 
+			// 优化：放入队列而不是直接写入
 			if msg.Type == "broadcast" || msg.Type == "private" {
-				// 创建数据库记录
-				chatMsg := ChatMessage{
+				chatMsg := &ChatMessage{
 					Sender:   msg.Sender,
-					Receiver: msg.To, // 将消息的 To 字段存入 Receiver
+					Receiver: msg.To,
 					Type:     msg.Type,
 					Content:  msg.Content,
 				}
-				DB.Create(&chatMsg)
+				
+				// 非阻塞放入队列
+				select {
+				case h.messageQueue <- chatMsg:
+				default:
+					// 队列已满，直接写入（降级处理）
+					DB.Create(chatMsg)
+				}
 
-				// 使用数据库生成的时间戳更新消息
-				msg.Timestamp = chatMsg.CreatedAt
+				// 使用当前时间戳（不等待数据库）
+				msg.Timestamp = time.Now()
 				messageBytes, _ = json.Marshal(msg)
 			}
 
@@ -142,15 +189,37 @@ func (h *Hub) run() {
 					}
 				}
 			} else {
-				for client := range h.clients {
-					select {
-					case client.send <- messageBytes:
-					default:
-						close(client.send)
-						delete(h.clients, client)
-					}
-				}
+				// 优化 2：批量发送，减少锁竞争
+				h.broadcastToAllOptimized(messageBytes)
 			}
+
+			// 使用完后归还对象池
+			messagePool.Put(msg)
+		}
+	}
+}
+
+// broadcastToAllOptimized 优化的批量发送版本
+func (h *Hub) broadcastToAllOptimized(msgBytes []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	// 预分配客户端列表
+	clients := make([]*Client, 0, len(h.clients))
+	for client := range h.clients {
+		clients = append(clients, client)
+	}
+
+	// 批量发送
+	for _, client := range clients {
+		select {
+		case client.send <- msgBytes:
+		default:
+			// 客户端缓冲区已满，标记为需要清理
+			go func(c *Client) {
+				close(c.send)
+				h.unregister <- c
+			}(client)
 		}
 	}
 }

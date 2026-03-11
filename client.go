@@ -100,7 +100,8 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, username string) 
 		log.Println(err)
 		return
 	}
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), name: username}
+	// 优化：增加发送缓冲区到 512，减少阻塞
+	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 512), name: username}
 	client.hub.register <- client
 
 	go func() {
