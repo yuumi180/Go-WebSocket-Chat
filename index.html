@@ -411,6 +411,9 @@
         <div id="typing-indicator" class="typing-indicator"></div>
         <div id="messages"></div>
         <div id="input-area">
+            <button id="clear-chat-btn" style="padding: 8px 15px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; margin-right: 10px;" title="清空当前聊天记录">
+                🗑️ 清空聊天
+            </button>
             <label for="image-input" class="image-upload-label">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
             </label>
@@ -463,6 +466,7 @@
     const chatTitle = document.getElementById('chat-title');
     const typingIndicator = document.getElementById('typing-indicator');
     const imageInput = document.getElementById('image-input');
+    const clearChatBtn = document.getElementById('clear-chat-btn');
 
     // --- 全局状态 ---
     let socket;
@@ -1095,6 +1099,43 @@
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
     }
+
+    // 清空当前聊天记录功能
+    clearChatBtn.addEventListener('click', () => {
+        const chatName = currentChatTarget ? `与 ${currentChatTarget} 的聊天记录` : '群聊大厅的聊天记录';
+
+        if (!confirm(`⚠️ 确定要清空${chatName}吗？\n\n此操作仅清空您的显示，不会影响其他用户的聊天记录。\n\n此操作无法恢复！`)) {
+            return;
+        }
+
+        // 过滤掉当前聊天的消息（只保留系统消息）
+        allMessages = allMessages.filter(msg => {
+            // 保留系统消息
+            if (msg.type === 'system') return true;
+
+            // 如果是群聊，过滤掉所有广播消息
+            if (currentChatTarget === null) {
+                return msg.type !== 'broadcast';
+            }
+
+            // 如果是私聊，过滤掉与该用户相关的所有消息
+            if (msg.type === 'private') {
+                return !((msg.sender === currentUsername && msg.to === currentChatTarget) ||
+                        (msg.sender === currentChatTarget && msg.to === currentUsername));
+            }
+
+            return true;
+        });
+
+        // 重新渲染消息列表
+        renderMessages();
+
+        showNotification('✅ 聊天记录已清空', 'success');
+    });
+
+    imageInput.addEventListener('change', (event) => {
+
+    });
 
 </script>
 
