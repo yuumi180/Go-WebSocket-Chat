@@ -6,6 +6,8 @@ import (
 	"log"
 	"time"
 
+	"websocket-chat/config"
+
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -35,12 +37,35 @@ func CheckPasswordHash(password, hash string) bool {
 
 // InitDB 初始化数据库连接
 func InitDB() {
-	var err error
-	dsn := "root:123456@tcp(192.168.1.246:3306)/go_chat?charset=utf8mb4&parseTime=True&loc=Local"
+	// 加载配置文件
+	cfg, err := config.LoadConfig("config/config.json")
+	if err != nil {
+		log.Printf("警告：无法加载配置文件 %v，使用默认配置", err)
+		// 使用默认配置（硬编码的旧配置）
+		dsn := "root:123456@tcp(192.168.1.246:3306)/go_chat?charset=utf8mb4&parseTime=True&loc=Local"
+		initDBWithDSN(dsn)
+		return
+	}
 
+	// 使用配置文件中的数据库配置
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Host,
+		cfg.Database.Port,
+		cfg.Database.DBName,
+	)
+
+	log.Printf("正在连接数据库：%s@%s:%s/%s", cfg.Database.User, cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName)
+	initDBWithDSN(dsn)
+}
+
+// initDBWithDSN 使用 DSN 初始化数据库
+func initDBWithDSN(dsn string) {
+	var err error
 	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
-		panic("failed to connect database")
+		panic("failed to connect database: " + err.Error())
 	}
 
 	// 获取底层 sql.DB 并配置连接池

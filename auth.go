@@ -4,10 +4,22 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"websocket-chat/config"
 )
 
-// 定义一个密钥，用于签名 JWT。在生产环境中应该更复杂，并从配置中读取。
-var jwtKey = []byte("my_secret_key")
+// 定义一个密钥，用于签名 JWT。从配置文件中读取。
+var jwtKey []byte
+
+// init 函数在包初始化时调用，用于加载 JWT 密钥
+func init() {
+	cfg, err := config.LoadConfig("config/config.json")
+	if err != nil {
+		// 如果配置文件加载失败，使用默认密钥
+		jwtKey = []byte("my_secret_key")
+		return
+	}
+	jwtKey = []byte(cfg.JWT.Secret)
+}
 
 // Claims 定义了 JWT 中存储的数据
 type Claims struct {

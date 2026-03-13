@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"websocket-chat/config"
+
 	"github.com/rs/cors"
 )
 
@@ -30,7 +32,7 @@ func createIndexIfNotExists(tableName, indexName, columns string) {
 		AND table_name = ? 
 		AND index_name = ?`
 	DB.Raw(query, tableName, indexName).Scan(&count)
-	
+
 	if count == 0 {
 		// 索引不存在，创建它
 		createSQL := fmt.Sprintf("CREATE INDEX %s ON %s (%s)", indexName, tableName, columns)
@@ -141,7 +143,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	// 验证密码
 	passwordValid := CheckPasswordHash(payload.Password, user.Password)
 	log.Printf("密码验证结果：%v", passwordValid)
-	
+
 	if !passwordValid {
 		log.Printf("密码验证失败 - 输入密码长度：%d", len(payload.Password))
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
@@ -197,7 +199,7 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User not found", http.StatusForbidden)
 		return
 	}
-	
+
 	if !currentUser.IsAdmin {
 		log.Printf("用户 %s 不是管理员", username)
 		http.Error(w, "Admin privileges required", http.StatusForbidden)
@@ -296,13 +298,13 @@ func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	// 直接使用 Exec 执行原生 SQL 删除
 	rawDelete := DB.Exec("DELETE FROM users WHERE username = ?", req.TargetUsername)
 	log.Printf("物理删除用户结果 - 影响行数：%d, 错误：%v", rawDelete.RowsAffected, rawDelete.Error)
-	
+
 	if rawDelete.Error != nil {
 		log.Printf("物理删除用户失败：%v", rawDelete.Error)
 		http.Error(w, "Failed to delete user: "+rawDelete.Error.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	if rawDelete.RowsAffected == 0 {
 		log.Printf("警告：没有删除任何用户记录")
 		http.Error(w, "No user deleted", http.StatusInternalServerError)
@@ -310,10 +312,10 @@ func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("管理员 %s 删除了用户 %s (ID: %d)", username, req.TargetUsername, targetUser.ID)
-	
+
 	// 新增：关闭被删除用户的 WebSocket 连接
 	closeUserConnection(req.TargetUsername)
-	
+
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "User deleted successfully")
 }
@@ -328,15 +330,21 @@ func closeUserConnection(targetUsername string) {
 }
 
 func main() {
+	// 首先加载全局配置
+	_, err := config.LoadConfig("config/config.json")
+	if err != nil {
+		log.Printf("警告：无法加载配置文件：%v", err)
+	}
+
 	InitDB()
-	
+
 	// 迁移旧密码（如果有）
 	MigratePasswords()
-	
+
 	// GORM 会自动通过 struct tag 创建索引，不需要手动创建
 	// 如果需要优化，可以在这里添加额外的复合索引
 	createCompositeIndexIfExists()
-	
+
 	// 创建默认管理员账号（如果不存在）
 	createDefaultAdmin()
 
@@ -465,13 +473,13 @@ func handleDeleteUserWithHub(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// 直接使用 Exec 执行原生 SQL 删除
 	rawDelete := DB.Exec("DELETE FROM users WHERE username = ?", req.TargetUsername)
 	log.Printf("物理删除用户结果 - 影响行数：%d, 错误：%v", rawDelete.RowsAffected, rawDelete.Error)
-	
+
 	if rawDelete.Error != nil {
 		log.Printf("物理删除用户失败：%v", rawDelete.Error)
 		http.Error(w, "Failed to delete user: "+rawDelete.Error.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	if rawDelete.RowsAffected == 0 {
 		log.Printf("警告：没有删除任何用户记录")
 		http.Error(w, "No user deleted", http.StatusInternalServerError)
@@ -479,10 +487,10 @@ func handleDeleteUserWithHub(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("管理员 %s 删除了用户 %s (ID: %d)", username, req.TargetUsername, targetUser.ID)
-	
+
 	// 新增：关闭被删除用户的 WebSocket 连接
 	hub.DisconnectUser(req.TargetUsername)
-	
+
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "User deleted successfully")
 }
