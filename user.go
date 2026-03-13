@@ -36,7 +36,7 @@ func CheckPasswordHash(password, hash string) bool {
 // InitDB 初始化数据库连接
 func InitDB() {
 	var err error
-	dsn := "root:123456@tcp(127.0.0.1:3306)/go_chat?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := "root:123456@tcp(192.168.1.246:3306)/go_chat?charset=utf8mb4&parseTime=True&loc=Local"
 
 	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -62,7 +62,7 @@ func InitDB() {
 func createOptimizedIndexes() {
 	// 检查并创建复合索引：加速离线消息查询
 	createIndexIfNotExistsMySQL("chat_messages", "idx_receiver_type_read", "receiver, type, is_read")
-	
+
 	// 检查并创建索引：加速 sender 查询
 	createIndexIfNotExistsMySQL("chat_messages", "idx_sender_created", "sender, created_at")
 }
@@ -77,9 +77,9 @@ func createIndexIfNotExistsMySQL(tableName, indexName, columns string) {
 		WHERE table_schema = DATABASE() 
 		AND table_name = ? 
 		AND index_name = ?`
-	
+
 	DB.Raw(query, tableName, indexName).Scan(&count)
-	
+
 	if count == 0 {
 		// 索引不存在，创建它
 		createSQL := fmt.Sprintf("CREATE INDEX %s ON %s (%s)", indexName, tableName, columns)
