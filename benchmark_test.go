@@ -32,7 +32,7 @@ func TestConcurrentConnections(t *testing.T) {
 // TestHighLoad 测试高负载情况
 func TestHighLoad(t *testing.T) {
 	config := BenchmarkConfig{
-		ConcurrentUsers: 200, // 增加到 200 用户
+		ConcurrentUsers: 2000, // 增加到 1000 用户
 		MessagesPerUser: 100,
 		MessageDelay:    0, // 无延迟
 	}
@@ -67,25 +67,25 @@ func runBenchmark(config BenchmarkConfig) {
 	time.Sleep(100 * time.Millisecond)
 
 	var (
-		wg              sync.WaitGroup
-		totalSent       int64 = 0
-		totalErrors     int64 = 0
-		startTime       = time.Now()
-		lastSecondSent  int64 = 0
+		wg             sync.WaitGroup
+		totalSent      int64 = 0
+		totalErrors    int64 = 0
+		startTime            = time.Now()
+		lastSecondSent int64 = 0
 	)
 
 	// 启动性能监控
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
-		
+
 		for range ticker.C {
 			currentSent := atomic.LoadInt64(&totalSent)
 			currentErrors := atomic.LoadInt64(&totalErrors)
-			
+
 			sentPerSecond := currentSent - lastSecondSent
 			lastSecondSent = currentSent
-			
+
 			elapsed := time.Since(startTime).Seconds()
 			if elapsed > 0 {
 				fmt.Printf("\r[进度] 已发送：%d | 错误：%d | 速率：%d 条/秒 | Goroutines: %d",
@@ -99,24 +99,24 @@ func runBenchmark(config BenchmarkConfig) {
 		wg.Add(1)
 		go func(userID int) {
 			defer wg.Done()
-			
+
 			// 创建模拟客户端
 			client := &Client{
 				hub:  hub,
 				name: fmt.Sprintf("user%d", userID),
 				send: make(chan []byte, 256),
 			}
-			
+
 			// 注册到 Hub
 			hub.register <- client
-			
+
 			// 启动客户端读取协程（仅消费消息，不统计）
 			go func() {
 				for range client.send {
 					// 消费消息，但不计数
 				}
 			}()
-			
+
 			// 发送消息
 			for j := 0; j < config.MessagesPerUser; j++ {
 				msg := Message{
@@ -125,20 +125,20 @@ func runBenchmark(config BenchmarkConfig) {
 					Content:   fmt.Sprintf("消息 %d 来自用户 %d", j, userID),
 					Timestamp: time.Now(),
 				}
-				
+
 				msgBytes, err := json.Marshal(msg)
 				if err != nil {
 					atomic.AddInt64(&totalErrors, 1)
 					continue
 				}
-				
+
 				hub.broadcast <- msgBytes
 				atomic.AddInt64(&totalSent, 1)
-				
+
 				// 模拟真实用户的输入延迟
 				time.Sleep(config.MessageDelay)
 			}
-			
+
 			// 断开连接
 			hub.unregister <- client
 		}(i)
@@ -146,7 +146,7 @@ func runBenchmark(config BenchmarkConfig) {
 
 	// 等待所有用户完成
 	wg.Wait()
-	
+
 	// 等待 Hub 处理完成
 	time.Sleep(500 * time.Millisecond)
 
