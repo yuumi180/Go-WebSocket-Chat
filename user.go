@@ -21,6 +21,10 @@ type User struct {
 	Username string `gorm:"unique"`
 	Password string
 	IsAdmin  bool `gorm:"default:false"`
+	Nickname string `gorm:"size:50"`
+	Age      int
+	Sex      string `gorm:"size:10"`
+	Address  string `gorm:"size:255"`
 }
 
 // HashPassword 使用 bcrypt 对密码进行哈希处理

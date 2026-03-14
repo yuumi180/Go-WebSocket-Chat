@@ -2,377 +2,552 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Go WebSocket Chat</title>
-    <style>
-        /* 全局样式 */
-        * {
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>shiyumi 的聊天室</title>
+    <link rel="icon" href="/favicon.png" type="image/png">
+
+    <style>        /* 全局样式 */
+    * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+    }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        background: linear-gradient(135deg, #71b7e6, #9b59b6);
+        overflow: hidden;
+    }
+
+    /* 基础响应式布局 */
+    @media (max-width: 768px) {
+        #chat-page {
+            width: 100%;
             height: 100vh;
-            background: linear-gradient(135deg, #71b7e6, #9b59b6);
-        }
-
-        /* 新增：移动端适配 */
-        @media (max-width: 768px) {
-            #chat-page {
-                width: 100%;
-                height: 100vh;
-                border-radius: 0;
-            }
-            .user-list-container {
-                width: 150px;
-            }
-        }
-
-        /* 新增：通知动画 */
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        .notification {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 25px;
-            background: #333;
-            color: white;
-            border-radius: 5px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            z-index: 10000;
-            animation: slideIn 0.3s ease-out;
-            max-width: 300px;
-        }
-
-        .notification.success {
-            background: #28a745;
-        }
-
-        .notification.error {
-            background: #dc3545;
-        }
-
-        .notification.info {
-            background: #17a2b8;
-        }
-
-        /* 新增：加载动画 */
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #9b59b6;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        /* 新增：消息已读标记 */
-        .message.read {
-            opacity: 0.7;
-        }
-
-        .message.unread {
+            border-radius: 0;
             position: relative;
         }
 
-        .message.unread::before {
-            content: '';
-            position: absolute;
-            left: -5px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 3px;
-            height: 70%;
-            background: #007bff;
-            border-radius: 2px;
-        }
-
-        /* 新增：@提及样式 */
-        .mention {
-            color: #007bff;
-            font-weight: bold;
-            cursor: pointer;
-        }
-
-        .mention:hover {
-            text-decoration: underline;
-        }
-
-        /* 认证页面容器 */
-        #auth-page {
-            width: 360px;
-            padding: 40px;
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-            text-align: center;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        #auth-page h2 {
-            margin-bottom: 25px;
-            color: #333;
-            padding: 0;
-            border: none;
-            font-size: 24px;
-        }
-        #auth-page input[type="text"], #auth-page input[type="password"] {
-            width: 100%;
-            padding: 12px;
-            margin-bottom: 15px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            height: auto;
-            font-size: 14px;
-        }
-        #auth-page button {
-            width: 100%;
-            padding: 12px;
-            border: none;
-            border-radius: 5px;
-            background-color: #9b59b6;
-            color: #fff;
-            font-size: 16px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        #auth-page button:hover {
-            background-color: #8e44ad;
-        }
-        .toggle-form {
-            color: #007bff;
-            cursor: pointer;
-            margin-top: 20px;
-            display: inline-block;
-            font-size: 14px;
-        }
-        .toggle-form:hover {
-            text-decoration: underline;
-        }
-
-        /* 聊天主页面容器 */
-        #chat-page {
-            display: none;
-            width: 90%;
-            max-width: 1200px;
-            height: 90vh;
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
-        }
-
-        /* 用户列表区域 */
         .user-list-container {
-            width: 200px;
-            border-right: 1px solid #eee;
-            padding: 20px;
-            background-color: #f8f9fa;
-            overflow-y: auto;
-            flex-shrink: 0;
-        }
-        .user-list-container h2 {
-            font-size: 18px;
-            margin-top: 0;
-            padding-bottom: 10px;
-            color: #333;
-            border-bottom: 1px solid #ddd;
-        }
-        #user-list {
-            list-style-type: none;
-            padding: 0;
-            margin: 0;
-        }
-        #user-list li {
-            padding: 10px 5px;
-            border-bottom: 1px solid #eee;
-            color: #555;
-            cursor: pointer;
-            transition: background-color 0.2s;
-            word-break: break-all;
-            display: flex;
-            align-items: center;
-        }
-        #user-list li:hover {
-            background-color: #e9ecef;
-        }
-        #user-list li.active {
-            background-color: #d4edda;
-            font-weight: bold;
-        }
-        .status-dot {
-            height: 8px;
-            width: 8px;
-            border-radius: 50%;
-            margin-right: 10px;
-            flex-shrink: 0;
-        }
-        .status-dot.online {
-            background-color: #28a745;
-        }
-        .status-dot.offline {
-            background-color: #ccc;
+            position: absolute;
+            left: -100%;
+            top: 0;
+            width: 250px;
+            height: 100%;
+            transition: left 0.3s ease;
+            z-index: 100;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.2);
         }
 
-        /* 聊天区域 */
-        .chat-container {
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-        }
-        .chat-container h2 {
-            margin: 0;
-            padding: 20px 20px 10px;
-            border-bottom: 1px solid #eee;
-            font-size: 20px;
-        }
-        #typing-indicator {
-            height: 20px;
-            padding: 0 20px;
-            font-style: italic;
-            color: #999;
-            font-size: 12px;
-        }
-        #messages {
-            flex-grow: 1;
-            overflow-y: auto;
-            padding: 20px;
-            background: #fafafa;
-        }
-        .message {
-            margin-bottom: 15px;
-            line-height: 1.4;
-            max-width: 80%;
-            display: flex;
-            flex-direction: column;
-            animation: messageSlide 0.3s ease-out;
+        .user-list-container.show {
+            left: 0;
         }
 
-        @keyframes messageSlide {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 99;
         }
 
-        .message .sender {
-            font-weight: bold;
-            color: #333;
-            font-size: 12px;
-            margin-bottom: 4px;
-        }
-        .message .content-wrapper {
-            display: inline-block;
-            padding: 8px 12px;
-            border-radius: 18px;
-            background-color: #f1f0f0;
-            text-align: left;
-            word-break: break-all;
-            align-self: flex-start;
-        }
-        .message .timestamp {
-            font-size: 10px;
-            color: #aaa;
-            margin-top: 4px;
-        }
-        .message .content-wrapper img {
-            max-width: 100%;
-            max-height: 200px;
-            border-radius: 10px;
+        .sidebar-overlay.show {
             display: block;
         }
 
-        .system-message {
-            color: #999; font-style: italic; text-align: center; font-size: 12px; width: 100%; max-width: 100%;
+        .mobile-menu-btn {
+            display: block !important;
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            z-index: 101;
+            background: #9b59b6;
+            border: none;
+            border-radius: 5px;
+            padding: 8px 12px;
+            color: white;
+            cursor: pointer;
+            font-size: 20px;
         }
 
-        .my-message {
-            align-items: flex-end; margin-left: auto;
+        #chat-title {
+            padding-left: 60px !important;
         }
-        .my-message .content-wrapper {
-            background-color: #007bff; color: white; align-self: flex-end;
+
+        .message {
+            max-width: 85% !important;
         }
-        .my-message .sender { display: none; }
 
         #input-area {
-            display: flex;
-            padding: 15px;
-            background-color: #f8f9fa;
-            border-top: 1px solid #eee;
-            align-items: center;
-        }
-        #message-input, #send-button {
-            height: 40px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-        #message-input {
-            flex-grow: 1;
-            margin-right: 10px;
-            resize: none;
-            padding: 0 10px;
-        }
-        #send-button {
-            width: 80px;
-            flex-shrink: 0;
-            padding: 0;
-            background-color: #9b59b6;
-            color: #fff;
-            border-color: #9b59b6;
-        }
-        #send-button:hover {
-            background-color: #8e44ad;
-        }
-        .image-upload-label {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 40px;
-            height: 40px;
-            cursor: pointer;
-            margin-right: 10px;
-        }
-        .image-upload-label svg {
-            color: #555;
-            transition: color 0.2s;
-        }
-        .image-upload-label:hover svg {
-            color: #007bff;
+            padding: 10px !important;
         }
 
-        /* 新增：未读消息计数 */
-        .unread-badge {
-            background: #dc3545;
-            color: white;
-            border-radius: 10px;
-            padding: 2px 6px;
-            font-size: 11px;
-            margin-left: 5px;
+        #message-input {
+            font-size: 16px !important;
         }
+    }
+
+    @media (max-width: 480px) {
+        .message {
+            max-width: 90% !important;
+        }
+
+        #send-button {
+            min-width: 60px !important;
+            font-size: 13px !important;
+        }
+
+        #clear-chat-btn {
+            display: none;
+        }
+    }
+
+    /* 桌面端隐藏菜单按钮 */
+    @media (min-width: 769px) {
+        .mobile-menu-btn {
+            display: none !important;
+        }
+    }
+
+    /* 新增：通知动画 */
+    @keyframes slideIn {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+
+    .notification {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 25px;
+        background: #333;
+        color: white;
+        border-radius: 5px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        z-index: 10000;
+        animation: slideIn 0.3s ease-out;
+        max-width: 300px;
+    }
+
+    @media (max-width: 768px) {
+        .notification {
+            top: 10px;
+            right: 10px;
+            left: 10px;
+            max-width: none;
+        }
+    }
+
+    .notification.success {
+        background: #28a745;
+    }
+
+    .notification.error {
+        background: #dc3545;
+    }
+
+    .notification.info {
+        background: #17a2b8;
+    }
+
+    /* 新增：加载动画 */
+    .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #9b59b6;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 20px auto;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* 新增：消息已读标记 */
+    .message.read {
+        opacity: 0.7;
+    }
+
+    .message.unread {
+        position: relative;
+    }
+
+    .message.unread::before {
+        content: '';
+        position: absolute;
+        left: -5px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 3px;
+        height: 70%;
+        background: #007bff;
+        border-radius: 2px;
+    }
+
+    /* 新增：@提及样式 */
+    .mention {
+        color: #007bff;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    .mention:hover {
+        text-decoration: underline;
+    }
+
+    /* 认证页面容器 */
+    #auth-page {
+        width: 360px;
+        padding: 40px;
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        text-align: center;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    @media (max-width: 480px) {
+        #auth-page {
+            width: 90%;
+            padding: 20px;
+        }
+    }
+
+    #auth-page h2 {
+        margin-bottom: 25px;
+        color: #333;
+        padding: 0;
+        border: none;
+        font-size: 24px;
+    }
+    #auth-page input[type="text"], #auth-page input[type="password"] {
+        width: 100%;
+        padding: 12px;
+        margin-bottom: 15px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        height: auto;
+        font-size: 14px;
+    }
+    #auth-page button {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 5px;
+        background-color: #9b59b6;
+        color: #fff;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+    #auth-page button:hover {
+        background-color: #8e44ad;
+    }
+    .toggle-form {
+        color: #007bff;
+        cursor: pointer;
+        margin-top: 20px;
+        display: inline-block;
+        font-size: 14px;
+    }
+    .toggle-form:hover {
+        text-decoration: underline;
+    }
+
+    /* 聊天主页面容器 */
+    #chat-page {
+        display: none;
+        width: 90%;
+        max-width: 1200px;
+        height: 90vh;
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* 用户列表区域 */
+    .user-list-container {
+        width: 200px;
+        border-right: 1px solid #eee;
+        padding: 20px;
+        background-color: #f8f9fa;
+        overflow-y: auto;
+        flex-shrink: 0;
+        transition: all 0.3s ease;
+    }
+
+    @media (max-width: 768px) {
+        .user-list-container {
+            width: 100%;
+            border-right: none;
+            border-bottom: 1px solid #eee;
+            padding: 15px;
+        }
+    }
+
+    .user-list-container h2 {
+        font-size: 18px;
+        margin-top: 0;
+        padding-bottom: 10px;
+        color: #333;
+        border-bottom: 1px solid #ddd;
+    }
+    #user-list {
+        list-style-type: none;
+        padding: 0;
+        margin: 0;
+    }
+    #user-list li {
+        padding: 10px 5px;
+        border-bottom: 1px solid #eee;
+        color: #555;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        word-break: break-all;
+        display: flex;
+        align-items: center;
+    }
+    #user-list li:hover {
+        background-color: #e9ecef;
+    }
+    #user-list li.active {
+        background-color: #d4edda;
+        font-weight: bold;
+    }
+    .status-dot {
+        height: 8px;
+        width: 8px;
+        border-radius: 50%;
+        margin-right: 10px;
+        flex-shrink: 0;
+    }
+    .status-dot.online {
+        background-color: #28a745;
+    }
+    .status-dot.offline {
+        background-color: #ccc;
+    }
+
+    /* 聊天区域 */
+    .chat-container {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+    }
+    .chat-container h2 {
+        margin: 0;
+        padding: 20px 20px 10px;
+        border-bottom: 1px solid #eee;
+        font-size: 20px;
+    }
+
+    @media (max-width: 768px) {
+        .chat-container h2 {
+            padding: 15px 15px 10px 50px;
+            font-size: 18px;
+        }
+    }
+
+    #typing-indicator {
+        height: 20px;
+        padding: 0 20px;
+        font-style: italic;
+        color: #999;
+        font-size: 12px;
+    }
+    #messages {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 20px;
+        background: #fafafa;
+    }
+
+    @media (max-width: 768px) {
+        #messages {
+            padding: 15px;
+        }
+    }
+
+    .message {
+        margin-bottom: 15px;
+        line-height: 1.4;
+        max-width: 80%;
+        display: flex;
+        flex-direction: column;
+        animation: messageSlide 0.3s ease-out;
+    }
+
+    @keyframes messageSlide {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .message .sender {
+        font-weight: bold;
+        color: #333;
+        font-size: 12px;
+        margin-bottom: 4px;
+    }
+    .message .content-wrapper {
+        display: inline-block;
+        padding: 8px 12px;
+        border-radius: 18px;
+        background-color: #f1f0f0;
+        text-align: left;
+        word-break: break-all;
+        align-self: flex-start;
+    }
+    .message .timestamp {
+        font-size: 10px;
+        color: #aaa;
+        margin-top: 4px;
+    }
+    .message .content-wrapper img {
+        max-width: 100%;
+        max-height: 200px;
+        border-radius: 10px;
+        display: block;
+    }
+
+    .system-message {
+        color: #999; font-style: italic; text-align: center; font-size: 12px; width: 100%; max-width: 100%;
+    }
+
+    .my-message {
+        align-items: flex-end; margin-left: auto;
+    }
+    .my-message .content-wrapper {
+        background-color: #007bff; color: white; align-self: flex-end;
+    }
+    .my-message .sender { display: none; }
+
+    #input-area {
+        display: flex;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-top: 1px solid #eee;
+        align-items: center;
+    }
+
+    @media (max-width: 768px) {
+        #input-area {
+            padding: 10px;
+            flex-wrap: wrap;
+        }
+    }
+
+    #message-input, #send-button {
+        height: 40px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        font-size: 14px;
+    }
+    #message-input {
+        flex-grow: 1;
+        margin-right: 10px;
+        resize: none;
+        padding: 0 10px;
+    }
+
+    @media (max-width: 768px) {
+        #message-input {
+            width: calc(100% - 120px);
+            order: 2;
+        }
+    }
+
+    #send-button {
+        width: 80px;
+        flex-shrink: 0;
+        padding: 0;
+        background-color: #9b59b6;
+        color: #fff;
+        border-color: #9b59b6;
+    }
+
+    @media (max-width: 480px) {
+        #send-button {
+            width: 60px;
+            font-size: 13px;
+        }
+    }
+
+    #send-button:hover {
+        background-color: #8e44ad;
+    }
+    .image-upload-label {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        cursor: pointer;
+        margin-right: 10px;
+    }
+    .image-upload-label svg {
+        color: #555;
+        transition: color 0.2s;
+    }
+    .image-upload-label:hover svg {
+        color: #007bff;
+    }
+
+    /* 新增：未读消息计数 */
+    .unread-badge {
+        background: #dc3545;
+        color: white;
+        border-radius: 10px;
+        padding: 2px 6px;
+        font-size: 11px;
+        margin-left: 5px;
+    }
+
+    /* 管理员和资料按钮响应式 */
+    #admin-panel, .profile-section {
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid #ddd;
+    }
+
+    #admin-users-btn, #profile-btn {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: opacity 0.2s;
+    }
+
+    #admin-users-btn:active, #profile-btn:active {
+        opacity: 0.8;
+    }
     </style>
 </head>
 <body>
@@ -395,7 +570,13 @@
     </div>
 </div>
 <div id="chat-page">
-    <div class="user-list-container">
+    <!-- 移动端菜单按钮 -->
+    <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+
+    <!-- 侧边栏遮罩层 -->
+    <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+    <div class="user-list-container" id="user-list-container">
         <h2>在线用户</h2>
         <ul id="user-list"></ul>
 
@@ -403,6 +584,13 @@
         <div id="admin-panel" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
             <button id="admin-users-btn" style="width: 100%; padding: 10px; background-color: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px;">
                 👑 用户管理
+            </button>
+        </div>
+
+        <!-- 个人资料入口 -->
+        <div class="profile-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
+            <button id="profile-btn" style="width: 100%; padding: 10px; background-color: #17a2b8; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px;">
+                👤 个人资料
             </button>
         </div>
     </div>
@@ -433,42 +621,82 @@
             <div style="overflow-x: auto;">
                 <table id="admin-users-table" style="width: 100%; border-collapse: collapse;">
                     <thead>
-                        <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-                            <th style="padding: 12px; text-align: left;">ID</th>
-                            <th style="padding: 12px; text-align: left;">用户名</th>
-                            <th style="padding: 12px; text-align: left;">角色</th>
-                            <th style="padding: 12px; text-align: left;">注册时间</th>
-                            <th style="padding: 12px; text-align: left;">状态</th>
-                            <th style="padding: 12px; text-align: left;">操作</th>
-                        </tr>
+                    <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                        <th style="padding: 12px; text-align: left;">ID</th>
+                        <th style="padding: 12px; text-align: left;">用户名</th>
+                        <th style="padding: 12px; text-align: left;">角色</th>
+                        <th style="padding: 12px; text-align: left;">注册时间</th>
+                        <th style="padding: 12px; text-align: left;">状态</th>
+                        <th style="padding: 12px; text-align: left;">操作</th>
+                    </tr>
                     </thead>
                     <tbody id="admin-users-tbody">
-                        <!-- 动态填充 -->
+                    <!-- 动态填充 -->
                     </tbody>
                 </table>
             </div>
         </div>
     </div>
+
+    <!-- 个人资料编辑模态框 -->
+    <div id="profile-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+        <div style="background: white; border-radius: 10px; padding: 20px; width: 500px; max-width: 90%; position: relative;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #eee;">
+                <h2 style="margin: 0; color: #333;">👤 个人资料</h2>
+                <button id="close-profile-modal" style="background: none; border: none; font-size: 28px; cursor: pointer; color: #999;">&times;</button>
+            </div>
+            <form id="profile-form">
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #555;">用户名</label>
+                    <input type="text" id="profile-username" readonly style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; background: #f8f9fa;">
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #555;">昵称</label>
+                    <input type="text" id="profile-nickname" placeholder="请输入昵称" maxlength="50" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #555;">年龄</label>
+                    <input type="number" id="profile-age" placeholder="请输入年龄" min="1" max="150" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #555;">性别</label>
+                    <select id="profile-sex" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                        <option value="">请选择</option>
+                        <option value="男">男</option>
+                        <option value="女">女</option>
+                    </select>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #555;">地址</label>
+                    <input type="text" id="profile-address" placeholder="请输入地址" maxlength="255" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                </div>
+                <button type="submit" style="width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer;">保存修改</button>
+            </form>
+        </div>
+    </div>
+
 </div>
 
-<script>
-    // --- DOM 元素获取 ---
-    const authPage = document.getElementById('auth-page');
-    const chatPage = document.getElementById('chat-page');
-    const loginForm = document.getElementById('login-form');
-    const registerForm = document.getElementById('register-form');
-    const loginBtn = document.getElementById('login-button');
-    const registerBtn = document.getElementById('register-button');
-    const messagesDiv = document.getElementById('messages');
-    const messageInput = document.getElementById('message-input');
-    const sendButton = document.getElementById('send-button');
-    const userListUl = document.getElementById('user-list');
-    const chatTitle = document.getElementById('chat-title');
-    const typingIndicator = document.getElementById('typing-indicator');
-    const imageInput = document.getElementById('image-input');
-    const clearChatBtn = document.getElementById('clear-chat-btn');
+<script>    // ... existing code ...
 
-    // --- 全局状态 ---
+// --- DOM 元素获取 ---
+const authPage = document.getElementById('auth-page');
+const chatPage = document.getElementById('chat-page');
+const loginForm = document.getElementById('login-form');
+const registerForm = document.getElementById('register-form');
+const loginBtn = document.getElementById('login-button');
+const registerBtn = document.getElementById('register-button');
+const messagesDiv = document.getElementById('messages');
+const messageInput = document.getElementById('message-input');
+const sendButton = document.getElementById('send-button');
+const userListUl = document.getElementById('user-list');
+const chatTitle = document.getElementById('chat-title');
+const typingIndicator = document.getElementById('typing-indicator');
+const imageInput = document.getElementById('image-input');
+const clearChatBtn = document.getElementById('clear-chat-btn');
+const userListContainer = document.getElementById('user-list-container');
+
+    // === 全局状态 ===
     let socket;
     let currentUsername;
     let currentChatTarget = null;
@@ -479,7 +707,21 @@
     let isAdmin = localStorage.getItem('isAdmin') === 'true' || false;
     let unreadCounts = {}; // 新增：未读消息计数
 
-    // --- 工具函数 ---
+    // === 工具函数 ===
+    // 新增：移动端侧边栏切换函数
+    function toggleSidebar() {
+        userListContainer.classList.toggle('show');
+        const overlay = document.querySelector('.sidebar-overlay');
+        overlay.classList.toggle('show');
+    }
+
+    // 新增：点击用户列表项后自动关闭侧边栏（移动端）
+    function handleUserListClick() {
+        if (window.innerWidth <= 768) {
+            toggleSidebar();
+        }
+    }
+
     // 新增：显示通知
     function showNotification(message, type = 'info') {
         const notification = document.createElement('div');
@@ -521,7 +763,7 @@
         return div.innerHTML;
     }
 
-    // --- 认证逻辑 ---
+    // === 认证逻辑 ===
     function toggleForms() {
         loginForm.style.display = loginForm.style.display === 'none' ? 'block' : 'none';
         registerForm.style.display = registerForm.style.display === 'none' ? 'block' : 'none';
@@ -588,7 +830,7 @@
         }
     });
 
-    // --- WebSocket 连接逻辑 ---
+    // === WebSocket 连接逻辑 ===
     let reconnectAttempts = 0;
     const MAX_RECONNECT_ATTEMPTS = 5;
     const RECONNECT_DELAY = 3000;
@@ -694,7 +936,7 @@
         };
     }
 
-    // --- 消息发送与输入事件监听 ---
+    // === 消息发送与输入事件监听 ===
     sendButton.addEventListener('click', () => sendTextMessage());
     messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -747,7 +989,7 @@
         }
     }
 
-    // --- 核心渲染流程 ---
+    // === 核心渲染流程 ===
     function addMessageToCacheAndRender(msg) {
         allMessages.push(msg);
         renderMessages();
@@ -819,19 +1061,24 @@
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
-    // 更新用户列表时，同步更新管理员面板的在线状态
     function updateUserListDOM() {
         userListUl.innerHTML = '';
         const groupChatElement = document.createElement('li');
         groupChatElement.textContent = '群聊大厅';
-        groupChatElement.onclick = () => selectChatTarget(null);
+        groupChatElement.onclick = () => {
+            selectChatTarget(null);
+            handleUserListClick();
+        };
         userListUl.appendChild(groupChatElement);
         const onlineUserSet = new Set(onlineUsers);
         allUsers.sort();
         allUsers.forEach(user => {
             if (user === currentUsername) return;
             const userElement = document.createElement('li');
-            userElement.onclick = () => selectChatTarget(user);
+            userElement.onclick = () => {
+                selectChatTarget(user);
+                handleUserListClick();
+            };
             const statusDot = document.createElement('span');
             statusDot.classList.add('status-dot');
             if (onlineUserSet.has(user)) {
@@ -930,6 +1177,89 @@
     const adminUsersTbody = document.getElementById('admin-users-tbody');
     let adminPanelRefreshInterval = null;
     let adminPanelLoaded = false;
+
+    // === 个人资料功能 ===
+    const profileBtn = document.getElementById('profile-btn');
+    const profileModal = document.getElementById('profile-modal');
+    const closeProfileModal = document.getElementById('close-profile-modal');
+    const profileForm = document.getElementById('profile-form');
+    const profileUsername = document.getElementById('profile-username');
+    const profileNickname = document.getElementById('profile-nickname');
+    const profileAge = document.getElementById('profile-age');
+    const profileSex = document.getElementById('profile-sex');
+    const profileAddress = document.getElementById('profile-address');
+
+    // 打开个人资料面板
+    profileBtn.addEventListener('click', async () => {
+        profileModal.style.display = 'flex';
+        await loadProfile();
+    });
+
+    // 关闭个人资料面板
+    closeProfileModal.addEventListener('click', () => {
+        profileModal.style.display = 'none';
+    });
+
+    // 点击模态框外部关闭
+    profileModal.addEventListener('click', (e) => {
+        if (e.target === profileModal) {
+            profileModal.style.display = 'none';
+        }
+    });
+
+    // 加载个人资料
+    async function loadProfile() {
+        const token = localStorage.getItem('token') || '';
+        try {
+            const response = await fetch(`/user/profile?token=${token}`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                throw new Error('加载个人资料失败');
+            }
+
+            const profile = await response.json();
+            profileUsername.value = profile.username;
+            profileNickname.value = profile.nickname || '';
+            profileAge.value = profile.age || '';
+            profileSex.value = profile.sex || '';
+            profileAddress.value = profile.address || '';
+        } catch (error) {
+            showNotification('加载个人资料失败：' + error, 'error');
+        }
+    }
+
+    // 保存个人资料
+    profileForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const token = localStorage.getItem('token') || '';
+        const profileData = {
+            nickname: profileNickname.value,
+            age: parseInt(profileAge.value) || 0,
+            sex: profileSex.value,
+            address: profileAddress.value
+        };
+
+        try {
+            const response = await fetch(`/user/update-profile?token=${token}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(profileData)
+            });
+
+            if (!response.ok) {
+                throw new Error('保存失败');
+            }
+
+            showNotification('✅ 个人资料已保存', 'success');
+            profileModal.style.display = 'none';
+        } catch (error) {
+            showNotification('保存失败：' + error, 'error');
+        }
+    });
 
     // 打开管理员面板
     adminUsersBtn.addEventListener('click', async () => {
@@ -1139,5 +1469,3 @@
 
 </script>
 
-</body>
-</html>

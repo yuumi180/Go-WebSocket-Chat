@@ -364,6 +364,8 @@ func main() {
 		// 使用闭包传递 hub
 		handleDeleteUserWithHub(hub, w, r)
 	})
+	mux.HandleFunc("/user/profile", handleGetProfile)
+	mux.HandleFunc("/user/update-profile", handleUpdateProfile)
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.URL.Query().Get("token")
 		if tokenStr == "" {
@@ -393,9 +395,9 @@ func main() {
 
 	// 在一个独立的 goroutine 中启动 HTTP 服务器，并使用包裹后的 handler
 	go func() {
-		fmt.Println("Chat server started on :8080")
-		fmt.Println("Open http://localhost:8080 in your browser.")
-		if err := http.ListenAndServe(":8080", handler); err != nil {
+		fmt.Println("Chat server started on :8081")
+		fmt.Println("Open http://localhost:8081 in your browser.")
+		if err := http.ListenAndServe(":8081", handler); err != nil {
 			log.Fatal("ListenAndServe: ", err)
 		}
 	}()
@@ -493,4 +495,91 @@ func handleDeleteUserWithHub(hub *Hub, w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "User deleted successfully")
+}
+
+// handleGetProfile 获取用户个人资料
+func handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr == "" {
+		http.Error(w, "Token is required", http.StatusUnauthorized)
+		return
+	}
+
+	username, err := ValidateJWT(tokenStr)
+	if err != nil {
+		http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	var user User
+	result := DB.Where("username = ?", username).First(&user)
+	if result.Error != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"username": user.Username,
+		"nickname": user.Nickname,
+		"age":      user.Age,
+		"sex":      user.Sex,
+		"address":  user.Address,
+	})
+}
+
+// handleUpdateProfile 更新用户个人资料
+func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr == "" {
+		http.Error(w, "Token is required", http.StatusUnauthorized)
+		return
+	}
+
+	username, err := ValidateJWT(tokenStr)
+	if err != nil {
+		http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	var payload struct {
+		Nickname string `json:"nickname"`
+		Age      int    `json:"age"`
+		Sex      string `json:"sex"`
+		Address  string `json:"address"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	var user User
+	result := DB.Where("username = ?", username).First(&user)
+	if result.Error != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	user.Nickname = payload.Nickname
+	user.Age = payload.Age
+	user.Sex = payload.Sex
+	user.Address = payload.Address
+
+	DB.Save(&user)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Profile updated successfully",
+	})
 }

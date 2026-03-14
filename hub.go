@@ -158,6 +158,43 @@ func (h *Hub) run() {
 			}
 
 			if msg.Type == "private" && msg.To != "" {
+				// 检查发送者是否是 admin
+				var sender User
+				senderResult := DB.Where("username = ?", msg.Sender).First(&sender)
+				
+				// 如果发送者不是 admin，检查接收者是否是 admin
+				if senderResult.Error == nil && !sender.IsAdmin {
+					// 普通用户，检查接收者是否是 admin
+					var receiver User
+					receiverResult := DB.Where("username = ?", msg.To).First(&receiver)
+					
+					if receiverResult.Error != nil || !receiver.IsAdmin {
+						// 接收者不是 admin，拒绝发送
+						log.Printf("用户 %s 尝试给非管理员用户 %s 发送私聊消息，已拒绝", msg.Sender, msg.To)
+						
+						// 发送错误通知给发送者
+						errorMsg := Message{
+							Type:      "system",
+							Sender:    "System",
+							Content:   "只能与管理员进行私聊",
+							Timestamp: time.Now(),
+						}
+						errorBytes, _ := json.Marshal(errorMsg)
+						
+						for c := range h.clients {
+							if c.name == msg.Sender {
+								select {
+								case c.send <- errorBytes:
+								default:
+								}
+								break
+							}
+						}
+						messagePool.Put(msg)
+						continue
+					}
+				}
+				
 				// 检查目标用户是否在线
 				targetOnline := false
 				for client := range h.clients {
